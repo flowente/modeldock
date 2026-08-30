@@ -166,6 +166,10 @@ The UI never talks directly to Ollama, Tailscale or Open WebUI. The backend owns
 
 See [Architecture](docs/ARCHITECTURE.md).
 
+## Project handoff
+
+If you are resuming the project from another chat or session, start from [Project Handoff](docs/HANDOFF.md).
+
 ## Before publishing
 
 Read [Public Release Checklist](docs/PUBLIC_RELEASE_CHECKLIST.md).
