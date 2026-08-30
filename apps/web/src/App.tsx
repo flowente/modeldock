@@ -1,15 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Check, Copy, Database, Gauge, LifeBuoy, MonitorSmartphone, Play, RefreshCw, Server, Settings, Terminal, Users } from "lucide-react";
 import {
   deleteJson,
   getJson,
   postJson,
   putJson,
-  type ComponentHealth,
   type DiagnosticCheck,
   type DiagnosticCheckResult,
-  type AccessGroup,
   type Model,
   type ModelAccessMatrix,
   type ModelAccessPolicy,
@@ -18,85 +16,27 @@ import {
   type SystemStatus,
   type TailnetDevice
 } from "./api.js";
-
-type UpdateModelAccessInput = {
-  modelName: string;
-  enabled?: boolean;
-  loaded?: boolean;
-  groupGrants?: Record<string, boolean>;
-};
-
-type ModelRuntimeAction = "loading" | "unloading";
-type ThemePreference = "light" | "dark";
-type ViewId = "home" | "models" | "devices" | "usage" | "onboarding" | "settings" | "diagnostics";
-
-type AppSettings = {
-  chatUrl: string;
-  serverName: string;
-  theme: ThemePreference;
-};
-
-const DEFAULT_SETTINGS: AppSettings = {
-  chatUrl: "",
-  serverName: "Flowente",
-  theme: "light"
-};
-
-const SETTINGS_STORAGE_KEY = "modeldock:settings";
-
-function getInitialView(): ViewId {
-  if (typeof window === "undefined") {
-    return "home";
-  }
-
-  return parseViewHash(window.location.hash);
-}
-
-function parseViewHash(hash: string): ViewId {
-  const value = hash.replace("#", "");
-
-  if (value === "system") {
-    return "home";
-  }
-
-  if (value === "tailscale" || value === "network") {
-    return "devices";
-  }
-
-  if (["home", "models", "devices", "usage", "onboarding", "settings", "diagnostics"].includes(value)) {
-    return value as ViewId;
-  }
-
-  return "home";
-}
-
-function readSettings(): AppSettings {
-  if (typeof window === "undefined") {
-    return DEFAULT_SETTINGS;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Partial<AppSettings>) : {};
-
-    return {
-      chatUrl: typeof parsed.chatUrl === "string" ? parsed.chatUrl : DEFAULT_SETTINGS.chatUrl,
-      serverName: typeof parsed.serverName === "string" && parsed.serverName.trim() ? parsed.serverName : DEFAULT_SETTINGS.serverName,
-      theme: parsed.theme === "dark" ? "dark" : DEFAULT_SETTINGS.theme
-    };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
-}
+import { NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
+import { ModelAccessRow, PullProgress } from "./components/models.js";
+import { OnboardingCard } from "./components/onboarding.js";
+import { DetailItem, DiagnosticResultRow, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
+import { UsageAccessRow } from "./components/usage.js";
+import { useAppSettings } from "./hooks/use-app-settings.js";
+import { useClipboard } from "./hooks/use-clipboard.js";
+import { useHashRoute } from "./hooks/use-hash-route.js";
+import { formatHealthStatus } from "./lib/format.js";
+import { getStringHealthDetail } from "./lib/health.js";
+import { getPullFeedback, isPullJobActive, isPullJobTerminal } from "./lib/pull-jobs.js";
+import { DEFAULT_SETTINGS, type ModelRuntimeAction, type ThemePreference, type UpdateModelAccessInput } from "./types.js";
 
 export function App() {
   const queryClient = useQueryClient();
-  const [activeView, setActiveView] = useState<ViewId>(getInitialView);
-  const [settings, setSettings] = useState<AppSettings>(readSettings);
-  const [serverUrlCopied, setServerUrlCopied] = useState(false);
-  const [chatUrlCopied, setChatUrlCopied] = useState(false);
-  const [onboardingCopied, setOnboardingCopied] = useState(false);
-  const [deviceInviteCopied, setDeviceInviteCopied] = useState(false);
+  const activeView = useHashRoute();
+  const { settings, updateSettings } = useAppSettings();
+  const serverUrlClipboard = useClipboard();
+  const chatUrlClipboard = useClipboard();
+  const onboardingClipboard = useClipboard();
+  const deviceInviteClipboard = useClipboard();
   const [pullModelName, setPullModelName] = useState("mistral:7b");
   const [activePullJobId, setActivePullJobId] = useState<string | null>(null);
   const [modelActionMessage, setModelActionMessage] = useState<string | null>(null);
@@ -220,13 +160,6 @@ export function App() {
     "Se non riesci a collegarti, manda al proprietario il nome del dispositivo che vedi in Tailscale."
   ].join("\n");
 
-  function updateSettings(next: Partial<AppSettings>) {
-    setSettings((current) => ({
-      ...current,
-      ...next
-    }));
-  }
-
   async function refreshModelRuntimeState() {
     setModelActionMessage("Refreshing runtime state...");
 
@@ -261,33 +194,15 @@ export function App() {
   }
 
   async function copyServerUrl() {
-    try {
-      await navigator.clipboard.writeText(serverUrl);
-      setServerUrlCopied(true);
-      window.setTimeout(() => setServerUrlCopied(false), 1600);
-    } catch {
-      setServerUrlCopied(false);
-    }
+    await serverUrlClipboard.copy(serverUrl);
   }
 
   async function copyOnboardingText() {
-    try {
-      await navigator.clipboard.writeText(onboardingShareText);
-      setOnboardingCopied(true);
-      window.setTimeout(() => setOnboardingCopied(false), 1600);
-    } catch {
-      setOnboardingCopied(false);
-    }
+    await onboardingClipboard.copy(onboardingShareText);
   }
 
   async function copyChatUrl() {
-    try {
-      await navigator.clipboard.writeText(displayChatUrl);
-      setChatUrlCopied(true);
-      window.setTimeout(() => setChatUrlCopied(false), 1600);
-    } catch {
-      setChatUrlCopied(false);
-    }
+    await chatUrlClipboard.copy(displayChatUrl);
   }
 
   async function testOpenWebUIConnection() {
@@ -295,13 +210,7 @@ export function App() {
   }
 
   async function copyDeviceInviteText() {
-    try {
-      await navigator.clipboard.writeText(onboardingShareText);
-      setDeviceInviteCopied(true);
-      window.setTimeout(() => setDeviceInviteCopied(false), 1600);
-    } catch {
-      setDeviceInviteCopied(false);
-    }
+    await deviceInviteClipboard.copy(onboardingShareText);
   }
 
   function updateTailnetDevice(input: { deviceId: string; hostname: string; authorized: boolean }) {
@@ -315,22 +224,6 @@ export function App() {
 
     updateDeviceAccess.mutate({ deviceId: input.deviceId, authorized: input.authorized });
   }
-
-  useEffect(() => {
-    function handleHashChange() {
-      setActiveView(parseViewHash(window.location.hash));
-    }
-
-    window.addEventListener("hashchange", handleHashChange);
-    handleHashChange();
-
-    return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-    document.documentElement.dataset.theme = settings.theme;
-  }, [settings]);
 
   return (
     <main className="shell">
@@ -347,7 +240,7 @@ export function App() {
           <div className="server-row">
             <code title={serverUrl}>{serverUrl}</code>
             <button className="icon-button" type="button" aria-label="Copy shareable server URL" title="Copy shareable server URL" onClick={() => void copyServerUrl()}>
-              {serverUrlCopied ? <Check size={15} /> : <Copy size={15} />}
+              {serverUrlClipboard.copied ? <Check size={15} /> : <Copy size={15} />}
             </button>
           </div>
         </div>
@@ -512,7 +405,7 @@ export function App() {
             </div>
             <div className="invite-actions">
               <button className="secondary-button" type="button" onClick={() => void copyDeviceInviteText()}>
-                {deviceInviteCopied ? "Copied" : "Copy invite"}
+                {deviceInviteClipboard.copied ? "Copied" : "Copy invite"}
               </button>
               <a className="link-button" href="#onboarding">
                 Open guide
@@ -550,7 +443,7 @@ export function App() {
                 <div className="share-row">
                   <code title={displayChatUrl}>{displayChatUrl}</code>
                   <button className="secondary-button" type="button" onClick={() => void copyChatUrl()}>
-                    {chatUrlCopied ? "Copied" : "Copy"}
+                    {chatUrlClipboard.copied ? "Copied" : "Copy"}
                   </button>
                 </div>
                 <a className="link-button" href={displayChatUrl} rel="noreferrer" target="_blank">
@@ -709,7 +602,7 @@ export function App() {
                 <p>Ready-to-send text for email, WhatsApp or Slack. Keep real passwords outside this message unless you choose another secure channel.</p>
               </div>
               <button className="secondary-button" type="button" onClick={() => void copyOnboardingText()}>
-                {onboardingCopied ? "Copied" : "Copy text"}
+                {onboardingClipboard.copied ? "Copied" : "Copy text"}
               </button>
               <textarea aria-label="Onboarding message" readOnly value={onboardingShareText} />
             </div>
@@ -807,365 +700,6 @@ export function App() {
   );
 }
 
-function PanelHeader({ action, title, subtitle }: { action?: ReactNode; title: string; subtitle?: string }) {
-  return (
-    <div className="panel-header">
-      <h2>{title}</h2>
-      {action ?? (subtitle ? <p>{subtitle}</p> : null)}
-    </div>
-  );
-}
-
-function StatusTile({ icon, label, status, message }: { icon: ReactNode; label: string; status?: ComponentHealth["status"]; message?: string }) {
-  const isOn = status === "available";
-
-  return (
-    <article className="status-tile">
-      <div className="status-tile-head">
-        <div className="status-icon">{icon}</div>
-        <StatusDot on={isOn} label={`${label} is ${isOn ? "on" : "off"}`} />
-      </div>
-      <div>
-        <span>{label}</span>
-        <strong>{formatHealthStatus(status)}</strong>
-        <p>{message ?? "Loading status"}</p>
-      </div>
-    </article>
-  );
-}
-
-function TailscaleSummary({ devices, health }: { devices: TailnetDevice[]; health?: ComponentHealth }) {
-  const addresses = getStringArrayHealthDetail(health, "addresses");
-  const tailnet = getStringHealthDetail(health, "tailnet");
-  const hostname = getStringHealthDetail(health, "hostname");
-  const onlineDevices = devices.filter((device) => device.online === true).length;
-
-  return (
-    <article className="integration-summary">
-      <div className="integration-summary-head">
-        <StatusDot on={health?.status === "available"} label={`Tailscale is ${health?.status ?? "loading"}`} />
-        <div>
-          <strong>{formatHealthStatus(health?.status)}</strong>
-          <p>{health?.message ?? "Reading Tailscale status"}</p>
-        </div>
-      </div>
-      <div className="detail-grid">
-        <DetailItem label="Tailnet" value={tailnet ?? "Not available"} />
-        <DetailItem label="Host" value={hostname ?? "Not available"} />
-        <DetailItem label="Tailscale IP" value={addresses.join(", ") || "Not available"} />
-        <DetailItem label="Devices online" value={`${onlineDevices}/${devices.length}`} />
-      </div>
-    </article>
-  );
-}
-
-function DetailItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="detail-item">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function OnboardingCard({
-  ctaLabel,
-  description,
-  href,
-  step,
-  title
-}: {
-  ctaLabel: string;
-  description: string;
-  href: string;
-  step: string;
-  title: string;
-}) {
-  return (
-    <article className="onboarding-card">
-      <span className="step-badge">{step}</span>
-      <h3>{title}</h3>
-      <p>{description}</p>
-      <a className="link-button" href={href} rel={href.startsWith("http") ? "noreferrer" : undefined} target={href.startsWith("http") ? "_blank" : undefined}>
-        {ctaLabel}
-      </a>
-    </article>
-  );
-}
-
-function UsageAccessRow({
-  device,
-  enabledModelCount,
-  groupName
-}: {
-  device: TailnetDevice;
-  enabledModelCount: number;
-  groupName: string;
-}) {
-  const userName = `${device.hostname.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/(^\.|\.$)/g, "") || "client"}@openwebui`;
-  const isReady = device.online === true && device.authorized;
-
-  return (
-    <tr>
-      <td>
-        <strong>{device.hostname}</strong>
-        <span className="muted-copy">{device.addresses[0] ?? "No Tailscale IP"}</span>
-      </td>
-      <td>
-        <span className="usage-user-pill">{userName}</span>
-      </td>
-      <td>{groupName}</td>
-      <td>{enabledModelCount} enabled</td>
-      <td>
-        <span className={`device-status-pill ${isReady ? "online" : "offline"}`}>{isReady ? "Ready" : "Needs check"}</span>
-      </td>
-    </tr>
-  );
-}
-
-function ModelAccessRow({
-  groups,
-  isDeleting,
-  isUpdating,
-  model,
-  onDelete,
-  onUpdate,
-  policy,
-  runtimeAction,
-  resources
-}: {
-  groups: AccessGroup[];
-  isDeleting: boolean;
-  isUpdating: boolean;
-  model: Model;
-  onDelete(name: string): void;
-  onUpdate(input: UpdateModelAccessInput): void;
-  policy?: ModelAccessPolicy;
-  runtimeAction: ModelRuntimeAction | null;
-  resources?: SystemResources;
-}) {
-  const loaded = policy?.loaded ?? model.running;
-  const enabled = policy?.enabled ?? true;
-  const fit = getModelFit(model, resources);
-
-  return (
-    <tr>
-      <td>
-        <strong>{model.name}</strong>
-        <span className="muted-copy">{model.tag}</span>
-      </td>
-      <td>
-        <span className={`fit-label ${fit.tone}`} title={fit.title}>{fit.label}</span>
-      </td>
-      <td>
-        {runtimeAction ? <RuntimeProgress action={runtimeAction} /> : <span className="size-value">{formatBytes(model.sizeBytes)}</span>}
-      </td>
-      <td className="control-cell">
-        <SwitchToggle
-          disabled={!policy || isUpdating}
-          label={`${model.name} is ${loaded ? "loaded in memory" : "not loaded in memory"}`}
-          on={loaded}
-          onClick={() => onUpdate({ modelName: model.name, loaded: !loaded })}
-        />
-      </td>
-      <td className="control-cell">
-        <SwitchToggle
-          disabled={!policy || isUpdating}
-          label={`${model.name} is ${enabled ? "enabled" : "disabled"}`}
-          on={enabled}
-          onClick={() => onUpdate({ modelName: model.name, enabled: !enabled })}
-        />
-      </td>
-      {groups.map((group) => {
-        const granted = isGroupGranted(policy, group.id);
-
-        return (
-          <td className="control-cell" key={group.id}>
-            <AccessCheckbox
-              checked={granted}
-              description={group.description}
-              label={`${group.name} ${granted ? "can use" : "cannot use"} ${model.name}`}
-              disabled={!policy || isUpdating}
-              onClick={() =>
-                onUpdate({
-                  modelName: model.name,
-                  groupGrants: {
-                    [group.id]: !granted
-                  }
-                })
-              }
-            />
-          </td>
-        );
-      })}
-      <td className="control-cell">
-        <button className="danger-button" disabled={isDeleting} type="button" onClick={() => onDelete(model.name)}>
-          Delete
-        </button>
-      </td>
-    </tr>
-  );
-}
-
-function RuntimeProgress({ action }: { action: ModelRuntimeAction }) {
-  const label = action === "loading" ? "Loading…" : "Unloading…";
-
-  return (
-    <span className="runtime-progress" role="status" aria-live="polite">
-      <span className="runtime-progress-label">{label}</span>
-      <span className="runtime-progress-track" aria-hidden="true">
-        <span />
-      </span>
-    </span>
-  );
-}
-
-function PullProgress({ job }: { job?: ModelPullJob }) {
-  const percentage = getPullPercentage(job);
-  const label = job ? `${job.model}: ${job.message}` : "Starting pull…";
-  const failed = job?.status === "failed";
-
-  return (
-    <div className={`pull-progress ${failed ? "failed" : ""}`} role="status" aria-live="polite">
-      <div className="pull-progress-copy">
-        <span>{label}</span>
-        {percentage !== null ? <strong>{percentage}%</strong> : null}
-      </div>
-      <div className={`pull-progress-track ${percentage === null && !failed ? "indeterminate" : ""}`}>
-        <span style={percentage === null ? undefined : { width: `${percentage}%` }} />
-      </div>
-      {job?.error ? <p>{job.error}</p> : null}
-    </div>
-  );
-}
-
-function SwitchToggle({
-  disabled,
-  label,
-  on,
-  onClick
-}: {
-  disabled?: boolean;
-  label: string;
-  on: boolean;
-  onClick(): void;
-}) {
-  return (
-    <button className={`switch-toggle ${on ? "on" : "off"}`} type="button" aria-label={label} aria-pressed={on} disabled={disabled} onClick={onClick}>
-      <span className="switch-track" aria-hidden="true">
-        <span className="switch-thumb" />
-      </span>
-    </button>
-  );
-}
-
-function AccessCheckbox({
-  checked,
-  description,
-  disabled,
-  label,
-  onClick
-}: {
-  checked: boolean;
-  description?: string;
-  disabled?: boolean;
-  label: string;
-  onClick(): void;
-}) {
-  return (
-    <label className={`access-checkbox ${checked ? "checked" : ""}`} title={description}>
-      <input type="checkbox" aria-label={label} checked={checked} disabled={disabled} onChange={onClick} />
-      <span aria-hidden="true" className="checkbox-box">
-        {checked ? "✓" : ""}
-      </span>
-    </label>
-  );
-}
-
-function NetworkDeviceCard({
-  canManage,
-  device,
-  isUpdating,
-  onUpdate
-}: {
-  canManage: boolean;
-  device: TailnetDevice;
-  isUpdating: boolean;
-  onUpdate(input: { deviceId: string; hostname: string; authorized: boolean }): void;
-}) {
-  const onlineStatus = formatOnlineStatus(device.online);
-  const primaryAddress = device.addresses[0] ?? "No address";
-  const secondaryAddresses = device.addresses.slice(1).join(", ");
-
-  return (
-    <article className="device">
-      <div className="device-main">
-        <div className="device-title-row">
-          <StatusDot on={device.online === true} label={`${device.hostname} is ${onlineStatus.toLowerCase()}`} />
-          <strong>{device.hostname}</strong>
-        </div>
-        <div className="device-facts">
-          <DetailItem label="Tailscale IP" value={primaryAddress} />
-          <DetailItem label="System" value={device.os ?? "Unknown"} />
-          <DetailItem label="Last seen" value={device.lastSeen ? formatReadableDate(device.lastSeen) : "Not available"} />
-        </div>
-        {secondaryAddresses ? <span className="device-secondary-addresses">{secondaryAddresses}</span> : null}
-      </div>
-      <div className="device-controls">
-        <div className="device-control-group">
-          <span className="device-control-label">Connection</span>
-          <span className={`device-status-pill ${getDeviceStatusTone(device.online)}`}>{onlineStatus}</span>
-        </div>
-        <div className="device-control-group">
-          <span className="device-control-label">Active</span>
-          <SwitchToggle
-            disabled={!canManage || isUpdating}
-            label={`${device.hostname} authorization is ${device.authorized ? "active" : "inactive"}`}
-            on={device.authorized}
-            onClick={() => onUpdate({ deviceId: device.id, hostname: device.hostname, authorized: !device.authorized })}
-          />
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function StatusDot({ label, on }: { label: string; on: boolean }) {
-  return <span aria-label={label || undefined} className={`status-dot ${on ? "on" : "off"}`} />;
-}
-
-function formatHealthStatus(status: ComponentHealth["status"] | undefined): string {
-  if (!status) {
-    return "Loading";
-  }
-
-  return status
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function getStringHealthDetail(health: ComponentHealth | undefined, key: string): string | undefined {
-  const value = health?.details?.[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function getStringArrayHealthDetail(health: ComponentHealth | undefined, key: string): string[] {
-  const value = health?.details?.[key];
-
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-}
-
-function isGroupGranted(policy: ModelAccessPolicy | undefined, groupId: string): boolean {
-  return (
-    policy?.grants.some((grant) => grant.canUse && grant.subject.type === "group" && grant.subject.id === groupId) ?? false
-  );
-}
-
 function isModelUpdatePending(isPending: boolean, variables: UpdateModelAccessInput | undefined, modelName: string): boolean {
   return isPending && variables?.modelName === modelName;
 }
@@ -1176,172 +710,4 @@ function getModelRuntimeAction(isPending: boolean, variables: UpdateModelAccessI
   }
 
   return variables.loaded ? "loading" : "unloading";
-}
-
-function isPullJobActive(job: ModelPullJob | undefined): boolean {
-  return job?.status === "queued" || job?.status === "running";
-}
-
-function isPullJobTerminal(job: ModelPullJob | undefined): boolean {
-  return job?.status === "succeeded" || job?.status === "failed";
-}
-
-function getPullPercentage(job: ModelPullJob | undefined): number | null {
-  if (!job?.completedBytes || !job.totalBytes || job.totalBytes <= 0) {
-    return null;
-  }
-
-  return Math.max(0, Math.min(100, Math.round((job.completedBytes / job.totalBytes) * 100)));
-}
-
-function getPullFeedback({
-  deleteFailed,
-  fallbackMessage,
-  isStarting,
-  pullFailed,
-  pullJob
-}: {
-  deleteFailed: boolean;
-  fallbackMessage: string | null;
-  isStarting: boolean;
-  pullFailed: boolean;
-  pullJob?: ModelPullJob;
-}): string {
-  if (isStarting) {
-    return "Starting pull…";
-  }
-
-  if (pullJob?.status === "failed") {
-    return `${pullJob.model}: Pull failed`;
-  }
-
-  if (pullJob?.status === "succeeded") {
-    return `${pullJob.model}: Pull completed`;
-  }
-
-  if (pullJob && isPullJobActive(pullJob)) {
-    return `${pullJob.model}: ${pullJob.message}`;
-  }
-
-  if (pullFailed) {
-    return "Pull failed";
-  }
-
-  if (deleteFailed) {
-    return "Delete failed";
-  }
-
-  return fallbackMessage ?? "";
-}
-
-function Warnings({ warnings }: { warnings: string[] }) {
-  if (warnings.length === 0) {
-    return <p className="ok-copy">All foundation checks are green.</p>;
-  }
-
-  return (
-    <ul className="warning-list">
-      {warnings.map((warning) => (
-        <li key={warning}>{warning}</li>
-      ))}
-    </ul>
-  );
-}
-
-function DiagnosticResultRow({ result }: { result: DiagnosticCheckResult }) {
-  const hasProblem = result.status !== "pass";
-
-  return (
-    <article className="diagnostic-row">
-      <StatusDot on={!hasProblem} label={`${result.label} ${hasProblem ? result.status : "ok"}`} />
-      <div className="diagnostic-copy">
-        <strong>{result.label}</strong>
-        {hasProblem ? <span>{result.message}</span> : null}
-      </div>
-      <code>{result.durationMs}ms</code>
-    </article>
-  );
-}
-
-function ErrorState({ message }: { message: string }) {
-  return <p className="error-copy">{message}</p>;
-}
-
-function getModelFit(model: Model, resources?: SystemResources): { label: string; tone: "info" | "warn" | "bad"; title: string } {
-  const freeBytes = resources?.memory.freeBytes;
-  const estimatedRequiredBytes = model.sizeBytes * 1.25;
-
-  if (!freeBytes) {
-    return {
-      label: "Usable",
-      tone: "info",
-      title: "Waiting for memory telemetry"
-    };
-  }
-
-  if (estimatedRequiredBytes <= freeBytes * 0.75) {
-    return {
-      label: "Usable",
-      tone: "info",
-      title: `Estimated need ${formatBytes(estimatedRequiredBytes)}; free RAM ${formatBytes(freeBytes)}`
-    };
-  }
-
-  if (estimatedRequiredBytes <= freeBytes) {
-    return {
-      label: "Overload risk",
-      tone: "warn",
-      title: `Estimated need ${formatBytes(estimatedRequiredBytes)}; free RAM ${formatBytes(freeBytes)}`
-    };
-  }
-
-  return {
-    label: "Too big",
-    tone: "bad",
-    title: `Estimated need ${formatBytes(estimatedRequiredBytes)}; free RAM ${formatBytes(freeBytes)}`
-  };
-}
-
-function formatOnlineStatus(online: TailnetDevice["online"]): string {
-  if (online === true) {
-    return "Online";
-  }
-
-  if (online === false) {
-    return "Offline";
-  }
-
-  return "Unknown";
-}
-
-function getDeviceStatusTone(online: TailnetDevice["online"]): "online" | "offline" | "unknown" {
-  if (online === true) {
-    return "online";
-  }
-
-  if (online === false) {
-    return "offline";
-  }
-
-  return "unknown";
-}
-
-function formatReadableDate(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
-}
-
-function formatBytes(value: number) {
-  if (value === 0) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-  return `${(value / 1024 ** index).toFixed(1)} ${units[index]}`;
 }

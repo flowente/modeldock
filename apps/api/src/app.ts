@@ -12,6 +12,8 @@ import {
   type IdGenerator,
   type Model,
   type ModelAccessStore,
+  type ModelPullJob,
+  type ModelPullJobStatus,
   type OllamaGateway,
   type SystemResources,
   type TailscaleGateway
@@ -42,20 +44,6 @@ interface RuntimeDependencies {
   modelAccess: ModelAccessStore;
   ollama: OllamaGateway;
   tailscale: TailscaleGateway;
-}
-
-type ModelPullJobStatus = "queued" | "running" | "succeeded" | "failed";
-
-interface ModelPullJob {
-  id: string;
-  model: string;
-  status: ModelPullJobStatus;
-  message: string;
-  completedBytes?: number;
-  totalBytes?: number;
-  error?: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {

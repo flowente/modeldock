@@ -135,6 +135,20 @@ export interface ModelPullProgress {
   totalBytes?: number;
 }
 
+export type ModelPullJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface ModelPullJob {
+  id: string;
+  model: string;
+  status: ModelPullJobStatus;
+  message: string;
+  completedBytes?: number;
+  totalBytes?: number;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PullModelInput {
   name: string;
 }

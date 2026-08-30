@@ -52,6 +52,12 @@ packages/
   testing/
 ```
 
+## Frontend Shape
+
+The web app keeps `App.tsx` as the orchestration layer only: data queries, mutations, route selection and page composition. Reusable UI language lives in `apps/web/src/components`, browser-local behavior lives in `apps/web/src/hooks`, and formatting/derived view logic lives in `apps/web/src/lib`.
+
+This keeps the interface easier to evolve: new pages should compose existing small pieces instead of adding unrelated logic to `App.tsx`.
+
 ## MVP Dependency Strategy
 
 The API supports fake gateways for deterministic tests and real adapters for local use.
