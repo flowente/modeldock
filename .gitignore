@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+*.key
+*API KEY*.txt
+*api key*.txt
+.turbo/
+coverage/
+playwright-report/
+test-results/
+*.log

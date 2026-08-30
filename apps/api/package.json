@@ -1,0 +1,26 @@
+{
+  "name": "@modeldock/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --experimental-strip-types src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modeldock/core": "workspace:*",
+    "@modeldock/diagnostics": "workspace:*",
+    "@modeldock/ollama-adapter": "workspace:*",
+    "@modeldock/tailscale-adapter": "workspace:*",
+    "@modeldock/testing": "workspace:*",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

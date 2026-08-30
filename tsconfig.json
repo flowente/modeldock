@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@modeldock/auth": ["packages/auth/src/index.ts"],
+      "@modeldock/core": ["packages/core/src/index.ts"],
+      "@modeldock/diagnostics": ["packages/diagnostics/src/index.ts"],
+      "@modeldock/observability": ["packages/observability/src/index.ts"],
+      "@modeldock/ollama-adapter": ["packages/ollama-adapter/src/index.ts"],
+      "@modeldock/storage": ["packages/storage/src/index.ts"],
+      "@modeldock/tailscale-adapter": ["packages/tailscale-adapter/src/index.ts"],
+      "@modeldock/testing": ["packages/testing/src/index.ts"]
+    }
+  },
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "vitest.config.ts"]
+}
+
