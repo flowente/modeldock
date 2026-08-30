@@ -14,6 +14,10 @@
   --accent: #176b4f;
   --accent-strong: #0f5c43;
   --accent-soft: #eaf4ef;
+  --button-bg: rgb(255 255 255 / 88%);
+  --button-bg-hover: #ffffff;
+  --button-border: rgb(23 107 79 / 18%);
+  --button-shadow: 0 10px 22px rgb(15 23 42 / 8%);
   --warning-soft: #fff3cf;
   --danger-soft: #ffe9e1;
   --radius-lg: 28px;
@@ -54,6 +58,10 @@
   --accent: #34c759;
   --accent-strong: #5ee179;
   --accent-soft: rgb(52 199 89 / 13%);
+  --button-bg: rgb(255 255 255 / 13%);
+  --button-bg-hover: rgb(255 255 255 / 20%);
+  --button-border: rgb(255 255 255 / 22%);
+  --button-shadow: 0 12px 26px rgb(0 0 0 / 22%);
   --warning-soft: rgb(245 183 75 / 12%);
   --danger-soft: rgb(229 83 61 / 13%);
   --shadow-shell: 0 30px 96px rgb(0 0 0 / 38%);
@@ -181,15 +189,17 @@ select {
   width: 32px;
   height: 32px;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 999px;
-  background: rgb(255 255 255 / 62%);
+  background: var(--button-bg);
   color: #176b4f;
   cursor: pointer;
+  box-shadow: var(--button-shadow);
 }
 
 .icon-button:hover {
-  background: rgb(255 255 255 / 86%);
+  background: var(--button-bg-hover);
+  transform: translateY(-1px);
 }
 
 .nav {
@@ -304,14 +314,19 @@ h3 {
   min-height: 38px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 999px;
-  background: rgb(255 255 255 / 64%);
+  background: var(--button-bg);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
   padding: 8px 13px;
-  box-shadow: 0 7px 16px rgb(15 23 42 / 4%);
+  box-shadow: var(--button-shadow);
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .secondary-button {
@@ -323,7 +338,22 @@ h3 {
 }
 
 .danger-button {
+  border-color: rgb(154 52 18 / 18%);
+  background: rgb(255 255 255 / 90%);
   color: #9a3412;
+}
+
+.secondary-button:hover:not(:disabled),
+.danger-button:hover:not(:disabled) {
+  background: var(--button-bg-hover);
+  border-color: rgb(23 107 79 / 30%);
+  box-shadow: 0 14px 28px rgb(15 23 42 / 10%);
+  transform: translateY(-1px);
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: rgb(154 52 18 / 30%);
+  background: #ffffff;
 }
 
 .secondary-button:disabled,
@@ -510,19 +540,27 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 999px;
-  background: rgb(255 255 255 / 64%);
+  background: var(--button-bg);
   color: var(--accent);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
   padding: 8px 13px;
-  box-shadow: 0 7px 16px rgb(15 23 42 / 4%);
+  box-shadow: var(--button-shadow);
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .panel-action-button:hover:not(:disabled) {
-  background: rgb(234 244 239 / 88%);
+  background: var(--button-bg-hover);
+  border-color: rgb(23 107 79 / 30%);
+  box-shadow: 0 14px 28px rgb(15 23 42 / 10%);
+  transform: translateY(-1px);
 }
 
 .panel-action-button:disabled {
@@ -838,19 +876,27 @@ h3 {
   min-height: 38px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 999px;
-  background: rgb(255 255 255 / 64%);
+  background: var(--button-bg);
   color: var(--accent);
   font-size: 13px;
   font-weight: 800;
   padding: 8px 13px;
-  box-shadow: 0 7px 16px rgb(15 23 42 / 4%);
+  box-shadow: var(--button-shadow);
   text-decoration: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .link-button:hover {
-  background: rgb(234 244 239 / 88%);
+  background: var(--button-bg-hover);
+  border-color: rgb(23 107 79 / 30%);
+  box-shadow: 0 14px 28px rgb(15 23 42 / 10%);
+  transform: translateY(-1px);
 }
 
 .share-template {
@@ -1304,11 +1350,6 @@ code {
   color: var(--metadata-text);
 }
 
-:root[data-theme="dark"] .secondary-button,
-:root[data-theme="dark"] .danger-button,
-:root[data-theme="dark"] .panel-action-button,
-:root[data-theme="dark"] .link-button,
-:root[data-theme="dark"] .icon-button,
 :root[data-theme="dark"] .model-toolbar input,
 :root[data-theme="dark"] .settings-grid input,
 :root[data-theme="dark"] .settings-grid select,
@@ -1346,6 +1387,33 @@ code {
 :root[data-theme="dark"] .share-template textarea,
 :root[data-theme="dark"] .checkbox-box {
   background: rgb(34 35 38 / 48%);
+}
+
+:root[data-theme="dark"] .secondary-button,
+:root[data-theme="dark"] .panel-action-button,
+:root[data-theme="dark"] .link-button,
+:root[data-theme="dark"] .icon-button {
+  color: #7ee79a;
+}
+
+:root[data-theme="dark"] .danger-button {
+  border-color: rgb(255 164 138 / 24%);
+  background: rgb(255 164 138 / 10%);
+  color: #ffb49e;
+}
+
+:root[data-theme="dark"] .secondary-button:hover:not(:disabled),
+:root[data-theme="dark"] .panel-action-button:hover:not(:disabled),
+:root[data-theme="dark"] .link-button:hover,
+:root[data-theme="dark"] .icon-button:hover {
+  border-color: rgb(126 231 154 / 34%);
+  background: var(--button-bg-hover);
+  box-shadow: 0 16px 32px rgb(0 0 0 / 28%);
+}
+
+:root[data-theme="dark"] .danger-button:hover:not(:disabled) {
+  border-color: rgb(255 164 138 / 36%);
+  background: rgb(255 164 138 / 16%);
 }
 
 :root[data-theme="dark"] .nav a:hover {
