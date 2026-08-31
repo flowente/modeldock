@@ -108,7 +108,7 @@ select {
   min-height: calc(100vh - 64px);
   overflow: hidden;
   margin: 32px auto;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius-lg);
   background: var(--shell-bg);
   backdrop-filter: var(--glass-blur);
@@ -116,7 +116,7 @@ select {
 }
 
 .sidebar {
-  border-right: 1px solid var(--border-soft);
+  border-right: 0;
   background: var(--sidebar-bg);
   padding: 26px 22px;
   backdrop-filter: var(--glass-blur);
