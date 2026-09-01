@@ -11,9 +11,14 @@ export type {
   ModelAccessPolicy,
   ModelPullJob,
   ModelPullProgress,
+  ManagedServerSetupStatus,
+  OllamaSetupStatus,
+  OpenWebUIRuntimeStatus,
+  OpenWebUISetupStatus,
   SystemResources,
   SystemStatus,
   TailnetDevice,
+  TailscaleSetupStatus,
   UpdateModelAccessPolicyInput
 } from "../../../packages/core/src/index.js";
 

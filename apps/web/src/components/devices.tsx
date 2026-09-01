@@ -1,9 +1,10 @@
 import type { ComponentHealth, TailnetDevice } from "../api.js";
-import { formatHealthStatus, formatOnlineStatus, formatReadableDate, getDeviceStatusTone } from "../lib/format.js";
+import type { LanguagePreference } from "../types.js";
+import { formatHealthStatus, formatHealthSummary, formatOnlineStatus, formatReadableDate, getDeviceStatusTone } from "../lib/format.js";
 import { getStringArrayHealthDetail, getStringHealthDetail } from "../lib/health.js";
 import { DetailItem, StatusDot, SwitchToggle } from "./shared.js";
 
-export function TailscaleSummary({ devices, health }: { devices: TailnetDevice[]; health?: ComponentHealth }) {
+export function TailscaleSummary({ devices, health, language }: { devices: TailnetDevice[]; health?: ComponentHealth; language: LanguagePreference }) {
   const addresses = getStringArrayHealthDetail(health, "addresses");
   const tailnet = getStringHealthDetail(health, "tailnet");
   const hostname = getStringHealthDetail(health, "hostname");
@@ -12,17 +13,17 @@ export function TailscaleSummary({ devices, health }: { devices: TailnetDevice[]
   return (
     <article className="integration-summary">
       <div className="integration-summary-head">
-        <StatusDot on={health?.status === "available"} label={`Tailscale is ${health?.status ?? "loading"}`} />
+        <StatusDot on={health?.status === "available"} label={language === "it" ? `Stato Tailscale: ${formatHealthStatus(health?.status, language)}` : `Tailscale is ${health?.status ?? "loading"}`} />
         <div>
-          <strong>{formatHealthStatus(health?.status)}</strong>
-          <p>{health?.message ?? "Reading Tailscale status"}</p>
+          <strong>{formatHealthStatus(health?.status, language)}</strong>
+          <p>{formatHealthSummary("Tailscale", health?.status, language)}</p>
         </div>
       </div>
       <div className="detail-grid">
-        <DetailItem label="Tailnet" value={tailnet ?? "Not available"} />
-        <DetailItem label="Host" value={hostname ?? "Not available"} />
-        <DetailItem label="Tailscale IP" value={addresses.join(", ") || "Not available"} />
-        <DetailItem label="Devices online" value={`${onlineDevices}/${devices.length}`} />
+        <DetailItem label="Tailnet" value={tailnet ?? (language === "it" ? "Non disponibile" : "Not available")} />
+        <DetailItem label={language === "it" ? "Computer" : "Host"} value={hostname ?? (language === "it" ? "Non disponibile" : "Not available")} />
+        <DetailItem label="IP Tailscale" value={addresses.join(", ") || (language === "it" ? "Non disponibile" : "Not available")} />
+        <DetailItem label={language === "it" ? "Dispositivi connessi" : "Devices online"} value={`${onlineDevices}/${devices.length}`} />
       </div>
     </article>
   );
@@ -32,41 +33,43 @@ export function NetworkDeviceCard({
   canManage,
   device,
   isUpdating,
+  language,
   onUpdate
 }: {
   canManage: boolean;
   device: TailnetDevice;
   isUpdating: boolean;
+  language: LanguagePreference;
   onUpdate(input: { deviceId: string; hostname: string; authorized: boolean }): void;
 }) {
-  const onlineStatus = formatOnlineStatus(device.online);
-  const primaryAddress = device.addresses[0] ?? "No address";
+  const onlineStatus = formatOnlineStatus(device.online, language);
+  const primaryAddress = device.addresses[0] ?? (language === "it" ? "Nessun indirizzo" : "No address");
   const secondaryAddresses = device.addresses.slice(1).join(", ");
 
   return (
     <article className="device">
       <div className="device-main">
         <div className="device-title-row">
-          <StatusDot on={device.online === true} label={`${device.hostname} is ${onlineStatus.toLowerCase()}`} />
+          <StatusDot on={device.online === true} label={language === "it" ? `${device.hostname}: ${onlineStatus.toLowerCase()}` : `${device.hostname} is ${onlineStatus.toLowerCase()}`} />
           <strong>{device.hostname}</strong>
         </div>
         <div className="device-facts">
-          <DetailItem label="Tailscale IP" value={primaryAddress} />
-          <DetailItem label="System" value={device.os ?? "Unknown"} />
-          <DetailItem label="Last seen" value={device.lastSeen ? formatReadableDate(device.lastSeen) : "Not available"} />
+          <DetailItem label="IP Tailscale" value={primaryAddress} />
+          <DetailItem label={language === "it" ? "Sistema" : "System"} value={device.os ?? (language === "it" ? "Sconosciuto" : "Unknown")} />
+          <DetailItem label={language === "it" ? "Ultimo accesso" : "Last seen"} value={device.lastSeen ? formatReadableDate(device.lastSeen, language) : language === "it" ? "Non disponibile" : "Not available"} />
         </div>
         {secondaryAddresses ? <span className="device-secondary-addresses">{secondaryAddresses}</span> : null}
       </div>
       <div className="device-controls">
         <div className="device-control-group">
-          <span className="device-control-label">Connection</span>
+          <span className="device-control-label">{language === "it" ? "Connessione" : "Connection"}</span>
           <span className={`device-status-pill ${getDeviceStatusTone(device.online)}`}>{onlineStatus}</span>
         </div>
         <div className="device-control-group">
-          <span className="device-control-label">Active</span>
+          <span className="device-control-label">{language === "it" ? "Attivo" : "Active"}</span>
           <SwitchToggle
             disabled={!canManage || isUpdating}
-            label={`${device.hostname} authorization is ${device.authorized ? "active" : "inactive"}`}
+            label={language === "it" ? `Autorizzazione di ${device.hostname}: ${device.authorized ? "attiva" : "non attiva"}` : `${device.hostname} authorization is ${device.authorized ? "active" : "inactive"}`}
             on={device.authorized}
             onClick={() => onUpdate({ deviceId: device.id, hostname: device.hostname, authorized: !device.authorized })}
           />

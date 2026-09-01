@@ -20,7 +20,7 @@ export function useHashRoute() {
 
 function getInitialView(): ViewId {
   if (typeof window === "undefined") {
-    return "home";
+    return "welcome";
   }
 
   return parseViewHash(window.location.hash);
@@ -37,9 +37,9 @@ function parseViewHash(hash: string): ViewId {
     return "devices";
   }
 
-  if (["home", "models", "devices", "usage", "onboarding", "settings", "diagnostics"].includes(value)) {
+  if (["welcome", "home", "models", "devices", "usage", "onboarding", "settings", "diagnostics"].includes(value)) {
     return value as ViewId;
   }
 
-  return "home";
+  return "welcome";
 }

@@ -14,7 +14,7 @@ Use this before creating the public GitHub repository.
 - README explains the current MVP.
 - `.env.example` lists all supported configuration keys.
 - Server setup guide works from a fresh machine.
-- Open WebUI is documented as link/health-check MVP, not full account sync.
+- Guided setup behavior for Ollama, Tailscale and Open WebUI is documented accurately.
 - Tailscale device authorization is clearly marked as a real external action.
 
 ## Verification

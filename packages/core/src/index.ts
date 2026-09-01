@@ -56,6 +56,89 @@ export interface SystemResources {
   };
 }
 
+export interface OllamaSetupStatus {
+  health: ComponentHealth;
+  modelsPath: string;
+  pathSource: "modeldock_env" | "ollama_env" | "default";
+  pathExists: boolean;
+  modelCount: number;
+  apiBaseUrl: string;
+  apiExposesModelsPath: false;
+  message: string;
+}
+
+export type ManagedServerSetupState = "idle" | "running" | "succeeded" | "failed";
+export type ManagedServerSetupPhase =
+  | "idle"
+  | "checking"
+  | "installing_ollama"
+  | "starting_ollama"
+  | "installing_chat"
+  | "starting_chat"
+  | "configuring_admin"
+  | "ready"
+  | "failed";
+
+export interface ManagedServerSetupStatus {
+  state: ManagedServerSetupState;
+  phase: ManagedServerSetupPhase;
+  progress: number;
+  message: string;
+  ollamaReady: boolean;
+  chatReady: boolean;
+  adminReady: boolean;
+  chatUrl?: string;
+  startedAt?: string;
+  updatedAt: string;
+}
+
+export interface TailscaleSetupStatus {
+  health: ComponentHealth;
+  installed: boolean;
+  loggedIn: boolean;
+  backendState?: string;
+  tailnet?: string;
+  hostname?: string;
+  addresses: string[];
+  suggestedServerUrl?: string;
+  apiRequiredForDeviceWrites: boolean;
+  message: string;
+}
+
+export interface OpenWebUISetupStatus {
+  health: ComponentHealth;
+  baseUrl?: string;
+  reachable: boolean;
+  apiKeyConfigured: boolean;
+  adminVerified: boolean;
+  authenticatedUser?: {
+    id?: string;
+    name?: string;
+    email?: string;
+    role?: string;
+  };
+  modelCount?: number;
+  message: string;
+}
+
+export type OpenWebUIRuntimeState = "running" | "starting" | "not_running" | "tool_missing";
+
+export interface OpenWebUIRuntimeStatus {
+  health: ComponentHealth;
+  baseUrl: string;
+  dataDir: string;
+  executablePath?: string;
+  installPath?: string;
+  installed: boolean;
+  port: number;
+  uvAvailable: boolean;
+  running: boolean;
+  startedByModelDock: boolean;
+  state: OpenWebUIRuntimeState;
+  log: string[];
+  message: string;
+}
+
 export interface Model {
   name: string;
   tag: string;

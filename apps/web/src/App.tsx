@@ -1,13 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Copy } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { Check, Copy, Database, Gauge, LifeBuoy, MonitorSmartphone, Play, RefreshCw, Server, Settings, Terminal, Users } from "lucide-react";
 import {
   deleteJson,
   getJson,
   postJson,
   putJson,
   type DiagnosticCheck,
-  type DiagnosticCheckResult,
   type Model,
   type ModelAccessMatrix,
   type ModelAccessPolicy,
@@ -19,24 +18,113 @@ import {
 import { NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
 import { ModelAccessRow, PullProgress } from "./components/models.js";
 import { OnboardingCard } from "./components/onboarding.js";
-import { DetailItem, DiagnosticResultRow, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
+import { DetailItem, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
 import { UsageAccessRow } from "./components/usage.js";
+import { WelcomeExperience } from "./components/welcome.js";
 import { useAppSettings } from "./hooks/use-app-settings.js";
 import { useClipboard } from "./hooks/use-clipboard.js";
 import { useHashRoute } from "./hooks/use-hash-route.js";
-import { formatHealthStatus } from "./lib/format.js";
+import { formatHealthStatus, formatHealthSummary } from "./lib/format.js";
 import { getStringHealthDetail } from "./lib/health.js";
 import { getPullFeedback, isPullJobActive, isPullJobTerminal } from "./lib/pull-jobs.js";
-import { DEFAULT_SETTINGS, type ModelRuntimeAction, type ThemePreference, type UpdateModelAccessInput } from "./types.js";
+import { DEFAULT_SETTINGS, type BackgroundPreference, type LanguagePreference, type ModelRuntimeAction, type UpdateModelAccessInput } from "./types.js";
+
+const uiCopy = {
+  en: {
+    brandSubtitle: "Local LLM control plane",
+    copyServerUrl: "Copy shareable server URL",
+    copied: "Copied",
+    copy: "Copy",
+    dashboard: "Dashboard",
+    devices: "Devices",
+    diagnostics: "Diagnostics",
+    home: "Home",
+    models: "Models",
+    onboarding: "Guided setup",
+    settings: "Settings",
+    usage: "Usage",
+    nodeOverview: "Node overview",
+    compactView: "The compact view of your local AI server.",
+    loadedModels: "Loaded models",
+    enabledModels: "Enabled models",
+    devicesOnline: "Devices online",
+    chatUrl: "Chat URL",
+    settingsSubtitle: "Server identity, Open WebUI entry point and local interface preferences.",
+    serverIdentity: "Server identity",
+    serverIdentityTitle: "How this AI server appears",
+    serverIdentityText: "Use a friendly name so onboarding messages and the dashboard title feel familiar.",
+    serverName: "Server name",
+    openWebUISettings: "Chat URL and connection",
+    openWebUISettingsText: "Set the URL people will open after their device is inside Tailscale. The backend health check still uses the .env URL.",
+    testConnection: "Test connection",
+    testing: "Testing…",
+    openChat: "Open chat",
+    interface: "Interface",
+    localPreferences: "Local display preferences",
+    localPreferencesText: "These options are saved only in this browser, not in the server configuration.",
+    language: "Language",
+    background: "Background",
+    serverAccessUrl: "Server URL",
+    ollamaModelsPath: "Ollama models folder",
+    secretsNote: "Secrets stay in the .env file. Browser preferences stay here until we add shared server-side settings."
+  },
+  it: {
+    brandSubtitle: "Pannello LLM locale",
+    copyServerUrl: "Copia URL del server",
+    copied: "Copiato",
+    copy: "Copia",
+    dashboard: "Dashboard",
+    devices: "Dispositivi",
+    diagnostics: "Diagnostica",
+    home: "Panoramica",
+    models: "Modelli",
+    onboarding: "Setup guidato",
+    settings: "Impostazioni",
+    usage: "Utilizzo",
+    nodeOverview: "Panoramica server",
+    compactView: "La vista essenziale del tuo AI server locale.",
+    loadedModels: "Modelli caricati",
+    enabledModels: "Modelli abilitati",
+    devicesOnline: "Dispositivi online",
+    chatUrl: "URL chat",
+    settingsSubtitle: "Identità server, accesso Open WebUI e preferenze locali dell'interfaccia.",
+    serverIdentity: "Identità server",
+    serverIdentityTitle: "Come appare questo AI server",
+    serverIdentityText: "Usa un nome familiare: comparirà nella dashboard e nei messaggi di invito.",
+    serverName: "Nome server",
+    openWebUISettings: "URL chat e connessione",
+    openWebUISettingsText: "Imposta l'indirizzo che le persone apriranno dopo essere entrate in Tailscale. Il controllo backend usa ancora l'URL nel file .env.",
+    testConnection: "Test connessione",
+    testing: "Verifica…",
+    openChat: "Apri chat",
+    interface: "Interfaccia",
+    localPreferences: "Preferenze locali",
+    localPreferencesText: "Queste opzioni sono salvate solo in questo browser, non nella configurazione del server.",
+    language: "Lingua",
+    background: "Sfondo",
+    serverAccessUrl: "URL server",
+    ollamaModelsPath: "Cartella modelli Ollama",
+    secretsNote: "I segreti restano nel file .env. Le preferenze del browser restano qui finché non aggiungiamo impostazioni condivise lato server."
+  }
+};
+
+const backgroundLabels: Record<BackgroundPreference, { en: string; it: string }> = {
+  graphite: { en: "Graphite glass", it: "Vetro grafite" },
+  mint: { en: "Soft mint", it: "Menta tenue" },
+  sand: { en: "Paper warm", it: "Carta calda" },
+  warm: { en: "Flowente paper", it: "Carta Flowente" }
+};
 
 export function App() {
   const queryClient = useQueryClient();
   const activeView = useHashRoute();
   const { settings, updateSettings } = useAppSettings();
+  const tr = (english: string, italian: string) => settings.language === "it" ? italian : english;
   const serverUrlClipboard = useClipboard();
   const chatUrlClipboard = useClipboard();
   const onboardingClipboard = useClipboard();
   const deviceInviteClipboard = useClipboard();
+  const [welcomeStep, setWelcomeStep] = useState(0);
   const [pullModelName, setPullModelName] = useState("mistral:7b");
   const [activePullJobId, setActivePullJobId] = useState<string | null>(null);
   const [modelActionMessage, setModelActionMessage] = useState<string | null>(null);
@@ -52,10 +140,6 @@ export function App() {
     queryKey: ["model-pull-job", activePullJobId],
     queryFn: () => getJson<ModelPullJob>(`/api/models/pull-jobs/${encodeURIComponent(activePullJobId ?? "")}`),
     refetchInterval: (query) => (isPullJobTerminal(query.state.data) ? false : 700)
-  });
-
-  const runDiagnostics = useMutation({
-    mutationFn: () => postJson<DiagnosticCheckResult[]>("/api/diagnostics/run-all")
   });
 
   const updateModelAccess = useMutation({
@@ -81,7 +165,7 @@ export function App() {
   const deleteModel = useMutation({
     mutationFn: (name: string) => deleteJson<{ deleted: true }>(`/api/models/${encodeURIComponent(name)}`),
     onSuccess: (_result, name) => {
-      setModelActionMessage(`${name} deleted successfully.`);
+      setModelActionMessage(tr(`${name} deleted successfully.`, `${name} eliminato correttamente.`));
       void invalidateModelQueries();
     }
   });
@@ -101,7 +185,7 @@ export function App() {
     const name = pullModelName.trim();
 
     if (!name) {
-      setModelActionMessage("Model name is required.");
+      setModelActionMessage(tr("Model name is required.", "Inserisci il nome del modello."));
       return;
     }
 
@@ -130,44 +214,39 @@ export function App() {
     fallbackMessage: modelActionMessage,
     isStarting: pullModel.isPending,
     pullFailed: pullModel.isError,
-    pullJob
+    pullJob,
+    language: settings.language
   });
   const normalizedServerName = settings.serverName.trim() || DEFAULT_SETTINGS.serverName;
   const displayChatUrl = settings.chatUrl.trim() || serverUrl;
-  const dashboardTitle = `AI Server di ${normalizedServerName}`;
+  const displayServerAccessUrl = settings.serverAccessUrl.trim() || serverUrl;
+  const dashboardTitle = settings.language === "it" ? `AI Server di ${normalizedServerName}` : `${normalizedServerName} AI Server`;
+  const copy = uiCopy[settings.language];
   const onlineDevices = (devices.data ?? []).filter((device) => device.online === true).length;
   const localModelNames = new Set((models.data ?? []).map((model) => model.name));
+  const localizedGroups = (accessMatrix.data?.groups ?? []).map((group) => ({
+    ...group,
+    description: translateGroupDescription(group.description, settings.language),
+    name: translateGroupName(group.name, settings.language)
+  }));
   const localModelPolicies = (accessMatrix.data?.models ?? []).filter((policy) => localModelNames.has(policy.modelName));
   const loadedModels = localModelPolicies.filter((policy) => policy.loaded).length;
   const enabledModels = localModelPolicies.filter((policy) => policy.enabled).length;
   const openWebUIHealth = system.data?.components.openWebUI;
   const activeDevices = (devices.data ?? []).filter((device) => device.authorized);
   const usageRows = activeDevices.slice(0, 4);
-  const onboardingShareText = [
-    `Ti ho invitato a usare ${dashboardTitle}.`,
-    "",
-    "Fai questi passaggi dal tuo dispositivo:",
-    "",
-    "1. Scarica Tailscale:",
-    "https://tailscale.com/download",
-    "",
-    "2. Accedi a Tailscale con l'account indicato dal proprietario del server.",
-    "",
-    "3. Aspetta che il dispositivo venga approvato.",
-    "",
-    `4. Apri la chat AI: ${displayChatUrl}`,
-    "",
-    "Se non riesci a collegarti, manda al proprietario il nome del dispositivo che vedi in Tailscale."
-  ].join("\n");
+  const onboardingShareText = settings.language === "it"
+    ? `Ciao, ti invito a utilizzare il mio server AI. Scarica Tailscale da https://tailscale.com/download oppure, se è già installato, accedi da https://login.tailscale.com con l'account indicato dal proprietario del server. Poi apri la chat: ${displayChatUrl}`
+    : `Hi, I invite you to use my AI server. Download Tailscale from https://tailscale.com/download or, if it is already installed, sign in at https://login.tailscale.com with the account provided by the server owner. Then open the chat: ${displayChatUrl}`;
 
   async function refreshModelRuntimeState() {
-    setModelActionMessage("Refreshing runtime state...");
+    setModelActionMessage(tr("Refreshing runtime state…", "Aggiornamento dello stato dei modelli…"));
 
     try {
       await invalidateModelQueries();
-      setModelActionMessage("Runtime state refreshed.");
+      setModelActionMessage(tr("Runtime state refreshed.", "Stato dei modelli aggiornato."));
     } catch {
-      setModelActionMessage("Runtime refresh failed.");
+      setModelActionMessage(tr("Runtime refresh failed.", "Aggiornamento dello stato non riuscito."));
     }
   }
 
@@ -180,13 +259,13 @@ export function App() {
 
   useEffect(() => {
     if (pullJob?.status === "succeeded") {
-      setModelActionMessage(`${pullJob.model} pulled successfully.`);
+      setModelActionMessage(tr(`${pullJob.model} pulled successfully.`, `${pullJob.model} scaricato correttamente.`));
       void invalidateModelQueries();
     }
   }, [pullJob?.id, pullJob?.model, pullJob?.status]);
 
   function confirmModelDelete(name: string) {
-    if (!window.confirm(`Delete ${name} from ModelDock?`)) {
+    if (!window.confirm(tr(`Delete ${name} from ModelDock?`, `Eliminare ${name} da ModelDock?`))) {
       return;
     }
 
@@ -194,7 +273,7 @@ export function App() {
   }
 
   async function copyServerUrl() {
-    await serverUrlClipboard.copy(serverUrl);
+    await serverUrlClipboard.copy(displayServerAccessUrl);
   }
 
   async function copyOnboardingText() {
@@ -215,7 +294,7 @@ export function App() {
 
   function updateTailnetDevice(input: { deviceId: string; hostname: string; authorized: boolean }) {
     if (!input.authorized) {
-      const confirmed = window.confirm(`Disattivare ${input.hostname}? Il device potrebbe perdere l'accesso alla rete privata.`);
+      const confirmed = window.confirm(tr(`Disable ${input.hostname}? The device may lose access to the private network.`, `Disattivare ${input.hostname}? Il dispositivo potrebbe perdere l'accesso alla rete privata.`));
 
       if (!confirmed) {
         return;
@@ -225,46 +304,63 @@ export function App() {
     updateDeviceAccess.mutate({ deviceId: input.deviceId, authorized: input.authorized });
   }
 
+  if (activeView === "welcome") {
+    return (
+      <WelcomeExperience
+        activeStep={welcomeStep}
+        chatUrl={displayChatUrl}
+        copied={onboardingClipboard.copied}
+        copyInvite={() => void copyOnboardingText()}
+        inviteMessage={onboardingShareText}
+        settings={settings}
+        setActiveStep={setWelcomeStep}
+        updateSettings={updateSettings}
+      />
+    );
+  }
+
   return (
     <main className="shell">
-      <aside className="sidebar" aria-label="ModelDock navigation">
+      <aside className="sidebar" aria-label={tr("ModelDock navigation", "Navigazione ModelDock")}>
         <div className="brand">
           <div className="brand-mark">M</div>
           <div>
             <strong>ModelDock</strong>
-            <span>Local LLM control plane</span>
+            <span>{copy.brandSubtitle}</span>
           </div>
         </div>
-        <div className="server-card" aria-label="ModelDock server">
-          <span>Server:</span>
+        <div className="server-card" aria-label={tr("ModelDock server", "Server ModelDock")}>
+          <span>{tr("Server:", "Server:")}</span>
           <div className="server-row">
-            <code title={serverUrl}>{serverUrl}</code>
-            <button className="icon-button" type="button" aria-label="Copy shareable server URL" title="Copy shareable server URL" onClick={() => void copyServerUrl()}>
-              {serverUrlClipboard.copied ? <Check size={15} /> : <Copy size={15} />}
+            <code title={displayServerAccessUrl}>{displayServerAccessUrl}</code>
+            <button className={`icon-button server-copy-button ${serverUrlClipboard.copied ? "copied" : ""}`} type="button" aria-label={serverUrlClipboard.copied ? copy.copied : copy.copyServerUrl} title={serverUrlClipboard.copied ? copy.copied : copy.copyServerUrl} onClick={() => void copyServerUrl()}>
+              {serverUrlClipboard.copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
             </button>
           </div>
         </div>
-        <nav className="nav">
+        <nav className="nav nav-primary">
           <a className={activeView === "home" ? "active" : undefined} href="#home" aria-current={activeView === "home" ? "page" : undefined}>
-            <Gauge size={16} /> Home
+            <span className="nav-dot" /> {copy.home}
           </a>
           <a className={activeView === "models" ? "active" : undefined} href="#models" aria-current={activeView === "models" ? "page" : undefined}>
-            <Database size={16} /> Models
+            <span className="nav-dot" /> {copy.models}
           </a>
           <a className={activeView === "devices" ? "active" : undefined} href="#devices" aria-current={activeView === "devices" ? "page" : undefined}>
-            <MonitorSmartphone size={16} /> Devices
+            <span className="nav-dot" /> {copy.devices}
           </a>
           <a className={activeView === "usage" ? "active" : undefined} href="#usage" aria-current={activeView === "usage" ? "page" : undefined}>
-            <Users size={16} /> Usage
+            <span className="nav-dot" /> {copy.usage}
           </a>
           <a className={activeView === "onboarding" ? "active" : undefined} href="#onboarding" aria-current={activeView === "onboarding" ? "page" : undefined}>
-            <LifeBuoy size={16} /> Onboarding
-          </a>
-          <a className={activeView === "settings" ? "active" : undefined} href="#settings" aria-current={activeView === "settings" ? "page" : undefined}>
-            <Settings size={16} /> Settings
+            <span className="nav-dot" /> {copy.onboarding}
           </a>
           <a className={activeView === "diagnostics" ? "active" : undefined} href="#diagnostics" aria-current={activeView === "diagnostics" ? "page" : undefined}>
-            <Terminal size={16} /> Diagnostics
+            <span className="nav-dot" /> {copy.diagnostics}
+          </a>
+        </nav>
+        <nav className="nav nav-footer" aria-label={tr("Preferences", "Preferenze")}>
+          <a className={activeView === "settings" ? "active" : undefined} href="#settings" aria-current={activeView === "settings" ? "page" : undefined}>
+            <span className="nav-dot" /> {copy.settings}
           </a>
         </nav>
       </aside>
@@ -272,31 +368,27 @@ export function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Node overview</p>
+            <p className="eyebrow">{copy.nodeOverview}</p>
             <h1>{dashboardTitle}</h1>
           </div>
-          <button className="primary-button" type="button" onClick={() => runDiagnostics.mutate()} disabled={runDiagnostics.isPending}>
-            {runDiagnostics.isPending ? <RefreshCw className="spin" size={16} /> : <Play size={16} />}
-            Run diagnostics
-          </button>
         </header>
 
         {activeView === "home" ? (
           <>
-            <section className="status-strip" aria-label="System summary">
-              <StatusTile icon={<Database size={18} />} label="Ollama" status={system.data?.components.ollama.status} message={system.data?.components.ollama.message} />
-              <StatusTile icon={<MonitorSmartphone size={18} />} label="Devices" status={system.data?.components.tailscale.status} message={system.data?.components.tailscale.message} />
-              <StatusTile icon={<Server size={18} />} label="Open WebUI" status={system.data?.components.openWebUI.status} message={system.data?.components.openWebUI.message} />
+            <section className="status-strip" aria-label={tr("System summary", "Riepilogo del sistema")}>
+              <StatusTile language={settings.language} label="Ollama" status={system.data?.components.ollama.status} message={formatHealthSummary("Ollama", system.data?.components.ollama.status, settings.language)} />
+              <StatusTile language={settings.language} label={copy.devices} status={system.data?.components.tailscale.status} message={formatHealthSummary("Tailscale", system.data?.components.tailscale.status, settings.language)} />
+              <StatusTile language={settings.language} label="Open WebUI" status={system.data?.components.openWebUI.status} message={formatHealthSummary("Open WebUI", system.data?.components.openWebUI.status, settings.language)} />
             </section>
 
             <section id="home" className="panel">
-              <PanelHeader title="Home" subtitle="The compact view of your local AI server." />
-              {system.isError ? <ErrorState message="System status is not available." /> : <Warnings warnings={system.data?.warnings ?? []} />}
+              <PanelHeader title={copy.home} subtitle={copy.compactView} />
+              {system.isError ? <ErrorState message={tr("System status is not available.", "Lo stato del sistema non è disponibile.")} /> : <Warnings language={settings.language} warnings={system.data?.warnings ?? []} />}
               <div className="home-metrics">
-                <DetailItem label="Loaded models" value={`${loadedModels}/${models.data?.length ?? 0}`} />
-                <DetailItem label="Enabled models" value={`${enabledModels}/${models.data?.length ?? 0}`} />
-                <DetailItem label="Devices online" value={`${onlineDevices}/${devices.data?.length ?? 0}`} />
-                <DetailItem label="Chat URL" value={displayChatUrl} />
+                <DetailItem label={copy.loadedModels} value={`${loadedModels}/${models.data?.length ?? 0}`} />
+                <DetailItem label={copy.enabledModels} value={`${enabledModels}/${models.data?.length ?? 0}`} />
+                <DetailItem label={copy.devicesOnline} value={`${onlineDevices}/${devices.data?.length ?? 0}`} />
+                <DetailItem label={copy.chatUrl} value={displayChatUrl} />
               </div>
             </section>
           </>
@@ -304,20 +396,20 @@ export function App() {
 
         {activeView === "models" ? <section id="models" className="panel">
           <PanelHeader
-            title="Models"
+            title={copy.models}
             action={
               <button className="panel-action-button" disabled={isRefreshingRuntime} type="button" onClick={() => void refreshModelRuntimeState()}>
-                <RefreshCw className={isRefreshingRuntime ? "spin" : undefined} size={15} />
-                Refresh runtime
+                {isRefreshingRuntime ? <span className="text-spinner" aria-hidden="true">◐</span> : null}
+                {tr("Refresh runtime", "Aggiorna stato")}
               </button>
             }
           />
           <form className="model-toolbar" onSubmit={submitModelPull}>
             <div className="model-toolbar-row">
               <label className="model-pull-field">
-                <span>Pull model</span>
+                <span>{tr("Pull model", "Scarica modello")}</span>
                 <input
-                  aria-label="Model name to pull"
+                  aria-label={tr("Model name to pull", "Nome del modello da scaricare")}
                   disabled={isPullingModel}
                   onChange={(event) => setPullModelName(event.target.value)}
                   placeholder="llama3.1:8b"
@@ -325,46 +417,47 @@ export function App() {
                 />
               </label>
               <button className="secondary-button" disabled={isPullingModel} type="submit">
-                {isPullingModel ? "Pulling…" : "Pull"}
+                {isPullingModel ? tr("Pulling…", "Download…") : tr("Pull", "Scarica")}
               </button>
               <button className="secondary-button subtle-button" disabled={!canClearModelPull || isPullingModel} type="button" onClick={clearModelPull}>
-                Clear
+                {tr("Clear", "Pulisci")}
               </button>
               <label className="model-feedback-field">
-                <span>Feedback</span>
-                <input aria-label="Pull feedback" readOnly value={pullFeedback} />
+                <span>{tr("Feedback", "Esito")}</span>
+                <input aria-label={tr("Pull feedback", "Esito del download")} readOnly value={pullFeedback} />
               </label>
             </div>
             <small className="model-pull-hint">
-              {shouldShowUnknownModelHint ? "Not in your local list. Check the exact name on " : "Find model names on "}
+              {shouldShowUnknownModelHint ? tr("Not in your local list. Check the exact name on ", "Non è presente nella lista locale. Controlla il nome esatto su ") : tr("Find model names on ", "Trova i nomi dei modelli su ")}
               <a href="https://ollama.com/search" rel="noreferrer" target="_blank">
                 Ollama Search
               </a>
               .
             </small>
           </form>
-          {isPullingModel || pullJob?.status === "failed" ? <PullProgress job={pullModel.isPending ? undefined : pullJob} /> : null}
+          {isPullingModel || pullJob?.status === "failed" ? <PullProgress job={pullModel.isPending ? undefined : pullJob} language={settings.language} /> : null}
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Ram fit</th>
-                  <th>Size</th>
-                  <th className="control-column">Loaded</th>
-                  <th className="control-column">Enabled</th>
-                  {(accessMatrix.data?.groups ?? []).map((group) => (
+                  <th>{tr("Name", "Nome")}</th>
+                  <th>{tr("Ram fit", "Compatibilità RAM")}</th>
+                  <th>{tr("Size", "Dimensione")}</th>
+                  <th className="control-column">{tr("Loaded", "Caricato")}</th>
+                  <th className="control-column">{tr("Enabled", "Abilitato")}</th>
+                  {localizedGroups.map((group) => (
                     <th className="control-column" key={group.id}>{group.name}</th>
                   ))}
-                  <th className="control-column">Actions</th>
+                  <th className="control-column">{tr("Actions", "Azioni")}</th>
                 </tr>
               </thead>
               <tbody>
                 {(models.data ?? []).map((model) => (
                   <ModelAccessRow
                     key={model.name}
-                    groups={accessMatrix.data?.groups ?? []}
+                    groups={localizedGroups}
                     isUpdating={isModelUpdatePending(updateModelAccess.isPending, updateModelAccess.variables, model.name)}
+                    language={settings.language}
                     model={model}
                     onDelete={confirmModelDelete}
                     onUpdate={(input) => updateModelAccess.mutate(input)}
@@ -377,43 +470,43 @@ export function App() {
               </tbody>
             </table>
           </div>
-          <p className="panel-note">Loaded means the model is already kept in memory. Enabled means ModelDock allows users to use it.</p>
+          <p className="panel-note">{tr("Loaded means the model is already kept in memory. Enabled means ModelDock allows users to use it.", "Caricato indica che il modello è già mantenuto in memoria. Abilitato indica che ModelDock ne permette l'utilizzo.")}</p>
         </section> : null}
 
         {activeView === "devices" ? <section id="devices" className="panel">
           <PanelHeader
-            title="Devices"
+            title={copy.devices}
             action={
               <button className="panel-action-button" disabled={isRefreshingTailscale} type="button" onClick={() => void refreshTailscaleState()}>
-                <RefreshCw className={isRefreshingTailscale ? "spin" : undefined} size={15} />
-                Refresh devices
+                {isRefreshingTailscale ? <span className="text-spinner" aria-hidden="true">◐</span> : null}
+                {tr("Refresh devices", "Aggiorna dispositivi")}
               </button>
             }
           />
-          <TailscaleSummary devices={devices.data ?? []} health={tailscaleHealth} />
+          <TailscaleSummary devices={devices.data ?? []} health={tailscaleHealth} language={settings.language} />
           <div className="device-overview">
-            <DetailItem label="Visible devices" value={`${devices.data?.length ?? 0}`} />
-            <DetailItem label="Online" value={`${onlineDevices}`} />
-            <DetailItem label="Active" value={`${(devices.data ?? []).filter((device) => device.authorized).length}`} />
-            <DetailItem label="Network layer" value="Tailscale" />
+            <DetailItem label={tr("Visible devices", "Dispositivi visibili")} value={`${devices.data?.length ?? 0}`} />
+            <DetailItem label={tr("Online", "Connessi")} value={`${onlineDevices}`} />
+            <DetailItem label={tr("Active", "Attivi")} value={`${(devices.data ?? []).filter((device) => device.authorized).length}`} />
+            <DetailItem label={tr("Network layer", "Rete privata")} value="Tailscale" />
           </div>
           <article className="invite-device-card">
             <div>
-              <span className="flow-step">Invite</span>
-              <h3>Add a new device</h3>
-              <p>Send a simple setup message to the client device. After Tailscale login, come back here and refresh Devices to approve or verify access.</p>
+              <span className="flow-step">{tr("Invite", "Invito")}</span>
+              <h3>{tr("Add a new device", "Aggiungi un dispositivo")}</h3>
+              <p>{tr("Send a simple setup message to the client device. After Tailscale login, come back here and refresh Devices to approve or verify access.", "Invia al dispositivo il messaggio guidato. Dopo l'accesso a Tailscale, torna qui e aggiorna la lista per approvare o verificare l'accesso.")}</p>
             </div>
             <div className="invite-actions">
               <button className="secondary-button" type="button" onClick={() => void copyDeviceInviteText()}>
-                {deviceInviteClipboard.copied ? "Copied" : "Copy invite"}
+                {deviceInviteClipboard.copied ? copy.copied : tr("Copy invite", "Copia invito")}
               </button>
               <a className="link-button" href="#onboarding">
-                Open guide
+                {tr("Open guide", "Apri guida")}
               </a>
             </div>
           </article>
-          {devices.isError ? <ErrorState message="Tailscale devices are not available." /> : null}
-          {!devices.isError && (devices.data ?? []).length === 0 ? <p className="empty">No Tailscale devices available yet.</p> : null}
+          {devices.isError ? <ErrorState message={tr("Tailscale devices are not available.", "I dispositivi Tailscale non sono disponibili.")} /> : null}
+          {!devices.isError && (devices.data ?? []).length === 0 ? <p className="empty">{tr("No Tailscale devices available yet.", "Non sono ancora disponibili dispositivi Tailscale.")}</p> : null}
           <div className="device-grid">
             {(devices.data ?? []).map((device) => (
               <NetworkDeviceCard
@@ -421,46 +514,47 @@ export function App() {
                 device={device}
                 isUpdating={updateDeviceAccess.isPending}
                 key={device.id}
+                language={settings.language}
                 onUpdate={updateTailnetDevice}
               />
             ))}
           </div>
           <p className="panel-note">
             {canManageTailscaleDevices
-              ? "Device authorization is managed through the Tailscale API. Tailscale is the secure network layer under this page."
-              : "Device authorization changes require the Tailscale API adapter and credentials."}
+              ? tr("Device authorization is managed through the Tailscale API. Tailscale is the secure network layer under this page.", "L'autorizzazione dei dispositivi è gestita tramite le API di Tailscale, che costituisce la rete privata di questa sezione.")
+              : tr("Device authorization changes require the Tailscale API adapter and credentials.", "Per modificare le autorizzazioni servono il collegamento API e le credenziali di Tailscale.")}
           </p>
         </section> : null}
 
         {activeView === "usage" ? (
           <section id="usage" className="panel">
-            <PanelHeader title="Usage" subtitle="Open WebUI entry point, access intent and the bridge between devices, users and models." />
+            <PanelHeader title={copy.usage} subtitle={tr("Open WebUI entry point and the connection between devices, users and models.", "Accesso a Open WebUI e collegamento tra dispositivi, utenti e modelli.")} />
             <div className="usage-grid">
               <article className="flow-card">
                 <span className="flow-step">Open WebUI</span>
-                <h3>Chat entry point</h3>
-                <p>Share this only with devices already connected through Tailscale. Open WebUI remains the chat surface; ModelDock keeps the control view tidy.</p>
+                <h3>{tr("Chat entry point", "Accesso alla chat")}</h3>
+                <p>{tr("Share this only with devices already connected through Tailscale. Open WebUI remains the chat surface; ModelDock keeps the control view tidy.", "Condividi questo indirizzo solo con dispositivi già collegati tramite Tailscale. Open WebUI gestisce la chat, mentre ModelDock mantiene ordinato il pannello di controllo.")}</p>
                 <div className="share-row">
                   <code title={displayChatUrl}>{displayChatUrl}</code>
                   <button className="secondary-button" type="button" onClick={() => void copyChatUrl()}>
-                    {chatUrlClipboard.copied ? "Copied" : "Copy"}
+                    {chatUrlClipboard.copied ? copy.copied : copy.copy}
                   </button>
                 </div>
                 <a className="link-button" href={displayChatUrl} rel="noreferrer" target="_blank">
-                  Open chat
+                  {copy.openChat}
                 </a>
               </article>
               <article className="flow-card">
-                <span className="flow-step">Status</span>
-                <h3>{formatHealthStatus(openWebUIHealth?.status)}</h3>
-                <p>{openWebUIHealth?.message ?? "Open WebUI status is loading."}</p>
+                <span className="flow-step">{tr("Status", "Stato")}</span>
+                <h3>{formatHealthStatus(openWebUIHealth?.status, settings.language)}</h3>
+                <p>{formatHealthSummary("Open WebUI", openWebUIHealth?.status, settings.language)}</p>
                 <div className="usage-status-list">
-                  <DetailItem label="Private network" value={tailscaleHealth?.status === "available" ? "Ready" : "Check Devices"} />
-                  <DetailItem label="Allowed models" value={`${enabledModels}`} />
+                  <DetailItem label={tr("Private network", "Rete privata")} value={tailscaleHealth?.status === "available" ? tr("Ready", "Pronta") : tr("Check Devices", "Controlla i dispositivi")} />
+                  <DetailItem label={tr("Allowed models", "Modelli consentiti")} value={`${enabledModels}`} />
                 </div>
                 {openWebUIHealth?.status !== "available" ? (
                   <a className="link-button" href="#settings">
-                    Configure Open WebUI
+                    {tr("Configure Open WebUI", "Configura Open WebUI")}
                   </a>
                 ) : null}
               </article>
@@ -468,23 +562,23 @@ export function App() {
             <section className="usage-access">
               <div className="usage-access-heading">
                 <div>
-                  <span className="flow-step">Access map</span>
-                  <h3>Device → Open WebUI user → Model access</h3>
-                  <p>This is the MVP manual layer. It makes the intended access model visible before we automate Open WebUI account management.</p>
+                  <span className="flow-step">{tr("Access map", "Mappa accessi")}</span>
+                  <h3>{tr("Device → Open WebUI user → Model access", "Dispositivo → Utente Open WebUI → Accesso ai modelli")}</h3>
+                  <p>{tr("This is the MVP manual layer. It makes the intended access model visible before we automate Open WebUI account management.", "Questa è la gestione manuale dell'MVP: rende visibile il modello di accesso prima di automatizzare gli account Open WebUI.")}</p>
                 </div>
                 <a className="link-button" href="#settings">
-                  Configure URL
+                  {tr("Configure URL", "Configura URL")}
                 </a>
               </div>
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Device</th>
-                      <th>Open WebUI user</th>
-                      <th>Group</th>
-                      <th>Allowed models</th>
-                      <th>Status</th>
+                      <th>{tr("Device", "Dispositivo")}</th>
+                      <th>{tr("Open WebUI user", "Utente Open WebUI")}</th>
+                      <th>{tr("Group", "Gruppo")}</th>
+                      <th>{tr("Allowed models", "Modelli consentiti")}</th>
+                      <th>{tr("Status", "Stato")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -493,14 +587,15 @@ export function App() {
                         <UsageAccessRow
                           device={device}
                           enabledModelCount={enabledModels}
-                          groupName={index === 0 ? "Admins" : index === 1 ? "Builders" : "Guests"}
+                          groupName={translateGroupName(index === 0 ? "Admins" : index === 1 ? "Builders" : "Guests", settings.language)}
                           key={device.id}
+                          language={settings.language}
                         />
                       ))
                     ) : (
                       <tr>
                         <td colSpan={5}>
-                          <span className="muted-copy">No active devices yet. Invite or approve a device first.</span>
+                          <span className="muted-copy">{tr("No active devices yet. Invite or approve a device first.", "Non ci sono ancora dispositivi attivi. Invita o approva prima un dispositivo.")}</span>
                         </td>
                       </tr>
                     )}
@@ -508,49 +603,49 @@ export function App() {
                 </table>
               </div>
             </section>
-            <p className="panel-note">Next step: replace the manual Open WebUI user column with real account data when we connect its admin API or a supported configuration path.</p>
+            <p className="panel-note">{tr("Next step: replace the manual Open WebUI user column with real account data when we connect its admin API or a supported configuration path.", "Prossimo passo: sostituire gli utenti Open WebUI provvisori con i dati reali ottenuti tramite le API amministrative.")}</p>
           </section>
         ) : null}
 
         {activeView === "onboarding" ? (
           <section id="onboarding" className="panel">
-            <PanelHeader title="Onboarding" subtitle="Two clear paths: one for the server owner, one for the client device." />
+            <PanelHeader title={copy.onboarding} subtitle={tr("Two clear paths: one for the server owner, one for the client device.", "Due percorsi chiari: uno per chi gestisce il server e uno per il dispositivo client.")} />
             <div className="onboarding-split">
               <section className="onboarding-path" aria-labelledby="server-onboarding-title">
                 <div className="path-heading">
                   <span className="flow-step">Server</span>
                   <div>
-                    <h3 id="server-onboarding-title">Setup server</h3>
-                    <p>Use this on the machine that runs ModelDock, Ollama, Tailscale and Open WebUI.</p>
+                    <h3 id="server-onboarding-title">{tr("Server setup", "Configura il server")}</h3>
+                    <p>{tr("Use this on the machine that runs ModelDock, Ollama, Tailscale and Open WebUI.", "Segui questi passaggi sulla macchina che esegue ModelDock, Ollama, Tailscale e Open WebUI.")}</p>
                   </div>
                 </div>
                 <div className="onboarding-grid">
                   <OnboardingCard
                     step="1"
-                    title="Install Ollama"
-                    description="This is the local engine that downloads and runs your AI models."
-                    ctaLabel="Download Ollama"
+                    title={tr("Install Ollama", "Installa Ollama")}
+                    description={tr("This is the local engine that downloads and runs your AI models.", "È il motore locale che scarica ed esegue i tuoi modelli AI.")}
+                    ctaLabel={tr("Download Ollama", "Scarica Ollama")}
                     href="https://ollama.com/download"
                   />
                   <OnboardingCard
                     step="2"
-                    title="Install and log in to Tailscale"
-                    description="This puts the server inside your private network, without exposing public ports."
-                    ctaLabel="Download Tailscale"
+                    title={tr("Install and log in to Tailscale", "Installa e accedi a Tailscale")}
+                    description={tr("This puts the server inside your private network, without exposing public ports.", "Inserisce il server nella rete privata senza esporre porte pubbliche.")}
+                    ctaLabel={tr("Download Tailscale", "Scarica Tailscale")}
                     href="https://tailscale.com/download"
                   />
                   <OnboardingCard
                     step="3"
-                    title="Connect Tailscale API"
-                    description="Add the API key in the .env file so ModelDock can read devices and manage authorization."
-                    ctaLabel="Open Settings"
+                    title={tr("Connect Tailscale API", "Collega le API di Tailscale")}
+                    description={tr("Add the API key in the .env file so ModelDock can read devices and manage authorization.", "Aggiungi la chiave API nel file .env per consentire a ModelDock di leggere i dispositivi e gestirne l'autorizzazione.")}
+                    ctaLabel={tr("Open Settings", "Apri Impostazioni")}
                     href="#settings"
                   />
                   <OnboardingCard
                     step="4"
-                    title="Connect Open WebUI"
-                    description="Set the chat URL, then use Open WebUI for account login and the chat experience."
-                    ctaLabel="Go to Usage"
+                    title={tr("Connect Open WebUI", "Collega Open WebUI")}
+                    description={tr("Set the chat URL, then use Open WebUI for account login and the chat experience.", "Imposta l'URL della chat, poi usa Open WebUI per gli account e l'esperienza di conversazione.")}
+                    ctaLabel={tr("Go to Usage", "Vai a Utilizzo")}
                     href="#usage"
                   />
                 </div>
@@ -560,37 +655,37 @@ export function App() {
                 <div className="path-heading">
                   <span className="flow-step">Client</span>
                   <div>
-                    <h3 id="client-onboarding-title">Invite a client</h3>
-                    <p>Use this for the phone, laptop or tablet that needs to reach the AI chat.</p>
+                    <h3 id="client-onboarding-title">{tr("Invite a client", "Invita un client")}</h3>
+                    <p>{tr("Use this for the phone, laptop or tablet that needs to reach the AI chat.", "Segui questi passaggi per il telefono, computer o tablet che deve raggiungere la chat AI.")}</p>
                   </div>
                 </div>
                 <div className="onboarding-grid">
                   <OnboardingCard
                     step="1"
-                    title="Send the download link"
-                    description="The client installs Tailscale directly on their own device."
-                    ctaLabel="Download Tailscale"
+                    title={tr("Send the download link", "Invia il link per il download")}
+                    description={tr("The client installs Tailscale directly on their own device.", "Il client installa Tailscale direttamente sul proprio dispositivo.")}
+                    ctaLabel={tr("Download Tailscale", "Scarica Tailscale")}
                     href="https://tailscale.com/download"
                   />
                   <OnboardingCard
                     step="2"
-                    title="Client logs in"
-                    description="They sign in with the account or invite you prepared for the server tailnet."
-                    ctaLabel="Open login"
+                    title={tr("Client logs in", "Il client accede")}
+                    description={tr("They sign in with the account or invite you prepared for the server tailnet.", "Accede con l'account o tramite l'invito preparato per la rete Tailscale del server.")}
+                    ctaLabel={tr("Open login", "Apri accesso")}
                     href="https://login.tailscale.com"
                   />
                   <OnboardingCard
                     step="3"
-                    title="Approve and verify"
-                    description="Refresh Devices in ModelDock and confirm the new device is visible, online and active."
-                    ctaLabel="Go to Devices"
+                    title={tr("Approve and verify", "Approva e verifica")}
+                    description={tr("Refresh Devices in ModelDock and confirm the new device is visible, online and active.", "Aggiorna Dispositivi in ModelDock e verifica che il nuovo dispositivo sia visibile, connesso e attivo.")}
+                    ctaLabel={tr("Go to Devices", "Vai a Dispositivi")}
                     href="#devices"
                   />
                   <OnboardingCard
                     step="4"
-                    title="Send the chat link"
-                    description="Once the device is active, share the Open WebUI link and the account credentials you created there."
-                    ctaLabel="Open chat"
+                    title={tr("Send the chat link", "Invia il link della chat")}
+                    description={tr("Once the device is active, share the Open WebUI link and the account credentials you created there.", "Quando il dispositivo è attivo, condividi il link Open WebUI e le credenziali dell'account creato.")}
+                    ctaLabel={copy.openChat}
                     href={displayChatUrl}
                   />
                 </div>
@@ -598,30 +693,43 @@ export function App() {
             </div>
             <div className="share-template">
               <div>
-                <h3>Client message</h3>
-                <p>Ready-to-send text for email, WhatsApp or Slack. Keep real passwords outside this message unless you choose another secure channel.</p>
+                <h3>{tr("Client message", "Messaggio per il client")}</h3>
+                <p>{tr("Ready-to-send text for email, WhatsApp or Slack. Keep real passwords outside this message unless you choose another secure channel.", "Testo pronto da inviare tramite email, WhatsApp o Slack. Non inserire password reali, salvo l'uso di un canale sicuro separato.")}</p>
               </div>
               <button className="secondary-button" type="button" onClick={() => void copyOnboardingText()}>
-                {onboardingClipboard.copied ? "Copied" : "Copy text"}
+                {onboardingClipboard.copied ? copy.copied : tr("Copy text", "Copia testo")}
               </button>
-              <textarea aria-label="Onboarding message" readOnly value={onboardingShareText} />
+              <textarea aria-label={tr("Onboarding message", "Messaggio di configurazione")} readOnly value={onboardingShareText} />
             </div>
           </section>
         ) : null}
 
         {activeView === "settings" ? (
           <section id="settings" className="panel">
-            <PanelHeader title="Settings" subtitle="Server identity, Open WebUI entry point and local interface preferences." />
+            <PanelHeader title={copy.settings} subtitle={copy.settingsSubtitle} />
             <div className="settings-sections">
               <section className="settings-card" aria-labelledby="server-identity-title">
                 <div>
-                  <span className="flow-step">Server identity</span>
-                  <h3 id="server-identity-title">How this AI server appears</h3>
-                  <p>Use a friendly name so onboarding messages and the dashboard title feel familiar.</p>
+                  <span className="flow-step">{copy.serverIdentity}</span>
+                  <h3 id="server-identity-title">{copy.serverIdentityTitle}</h3>
+                  <p>{copy.serverIdentityText}</p>
                 </div>
                 <label>
-                  <span>Server name</span>
-                  <input aria-label="Server name" value={settings.serverName} onChange={(event) => updateSettings({ serverName: event.target.value })} />
+                  <span>{copy.serverName}</span>
+                  <input aria-label={copy.serverName} value={settings.serverName} onChange={(event) => updateSettings({ serverName: event.target.value })} />
+                </label>
+                <label>
+                  <span>{copy.serverAccessUrl}</span>
+                  <input
+                    aria-label={copy.serverAccessUrl}
+                    placeholder={tr("http://100.x.y.z:4173 or MagicDNS", "http://100.x.y.z:4173 oppure MagicDNS")}
+                    value={settings.serverAccessUrl}
+                    onChange={(event) => updateSettings({ serverAccessUrl: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>{copy.ollamaModelsPath}</span>
+                  <input aria-label={copy.ollamaModelsPath} value={settings.ollamaModelsPath} onChange={(event) => updateSettings({ ollamaModelsPath: event.target.value })} />
                 </label>
               </section>
 
@@ -629,70 +737,70 @@ export function App() {
                 <div className="settings-card-heading">
                   <div>
                     <span className="flow-step">Open WebUI</span>
-                    <h3 id="openwebui-settings-title">Chat URL and connection</h3>
-                    <p>Set the URL people will open after their device is inside Tailscale. The backend health check still uses the `.env` URL.</p>
+                    <h3 id="openwebui-settings-title">{copy.openWebUISettings}</h3>
+                    <p>{copy.openWebUISettingsText}</p>
                   </div>
                   <span className={`device-status-pill ${openWebUIHealth?.status === "available" ? "online" : openWebUIHealth?.status === "not_configured" ? "unknown" : "offline"}`}>
-                    {formatHealthStatus(openWebUIHealth?.status)}
+                    {formatHealthStatus(openWebUIHealth?.status, settings.language)}
                   </span>
                 </div>
                 <label>
-                  <span>Chat URL</span>
+                  <span>{copy.chatUrl}</span>
                   <input
-                    aria-label="Open WebUI chat URL"
-                    placeholder="Example: http://100.x.y.z:3000 or your Tailscale MagicDNS URL"
+                    aria-label={tr("Open WebUI chat URL", "URL della chat Open WebUI")}
+                    placeholder={tr("Example: http://100.x.y.z:8080 or your Tailscale MagicDNS URL", "Esempio: http://100.x.y.z:8080 oppure l'URL MagicDNS di Tailscale")}
                     value={settings.chatUrl}
                     onChange={(event) => updateSettings({ chatUrl: event.target.value })}
                   />
                 </label>
                 <div className="settings-actions">
                   <button className="secondary-button" type="button" onClick={() => void testOpenWebUIConnection()} disabled={system.isFetching}>
-                    {system.isFetching ? "Testing…" : "Test connection"}
+                    {system.isFetching ? copy.testing : copy.testConnection}
                   </button>
                   <a className="link-button" href={displayChatUrl} rel="noreferrer" target="_blank">
-                    Open chat
+                    {copy.openChat}
                   </a>
                 </div>
-                <p className="settings-hint">{openWebUIHealth?.message ?? "Set MODELDOCK_OPENWEBUI_BASE_URL in .env for the backend health check."}</p>
+                <p className="settings-hint">{formatHealthSummary("Open WebUI", openWebUIHealth?.status, settings.language)}</p>
               </section>
 
               <section className="settings-card" aria-labelledby="interface-settings-title">
                 <div>
-                  <span className="flow-step">Interface</span>
-                  <h3 id="interface-settings-title">Local display preferences</h3>
-                  <p>These options are saved only in this browser, not in the server configuration.</p>
+                  <span className="flow-step">{copy.interface}</span>
+                  <h3 id="interface-settings-title">{copy.localPreferences}</h3>
+                  <p>{copy.localPreferencesText}</p>
                 </div>
                 <label>
-                  <span>Theme</span>
-                  <select aria-label="Theme" value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as ThemePreference })}>
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
+                  <span>{copy.language}</span>
+                  <select aria-label={copy.language} value={settings.language} onChange={(event) => updateSettings({ language: event.target.value as LanguagePreference })}>
+                    <option value="it">Italiano</option>
+                    <option value="en">English</option>
+                  </select>
+                </label>
+                <label>
+                  <span>{copy.background}</span>
+                  <select aria-label={copy.background} value={settings.background} onChange={(event) => updateSettings({ background: event.target.value as BackgroundPreference })}>
+                    {Object.entries(backgroundLabels).map(([value, label]) => (
+                      <option key={value} value={value}>{label[settings.language]}</option>
+                    ))}
                   </select>
                 </label>
               </section>
             </div>
-            <p className="panel-note">Secrets stay in the .env file. Browser preferences stay here until we add shared server-side settings.</p>
+            <p className="panel-note">{copy.secretsNote}</p>
           </section>
         ) : null}
 
         {activeView === "diagnostics" ? <section id="diagnostics" className="panel">
-          <PanelHeader title="Diagnostics" subtitle="Checks are first-class, not an afterthought." />
-          {runDiagnostics.data ? (
-            <div className="diagnostic-list">
-              {runDiagnostics.data.map((result) => (
-                <DiagnosticResultRow key={result.id} result={result} />
-              ))}
-            </div>
-          ) : (
-            <div className="check-list">
-              {(checks.data ?? []).map((check) => (
-                <div className="check-row" key={check.id}>
-                  <StatusDot on={true} label={`${check.label} ready`} />
-                  <span>{check.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          <PanelHeader title={copy.diagnostics} subtitle={tr("System checks and technical details.", "Controlli del sistema e dettagli tecnici.")} />
+          <div className="check-list">
+            {(checks.data ?? []).map((check) => (
+              <div className="check-row" key={check.id}>
+                <StatusDot on={true} label={tr(`${check.label} ready`, `${translateDiagnosticLabel(check.label)} pronto`)} />
+                <span>{settings.language === "it" ? translateDiagnosticLabel(check.label) : check.label}</span>
+              </div>
+            ))}
+          </div>
         </section> : null}
 
       </section>
@@ -702,6 +810,42 @@ export function App() {
 
 function isModelUpdatePending(isPending: boolean, variables: UpdateModelAccessInput | undefined, modelName: string): boolean {
   return isPending && variables?.modelName === modelName;
+}
+
+function translateGroupName(name: string, language: LanguagePreference): string {
+  if (language !== "it") return name;
+
+  const labels: Record<string, string> = {
+    Admins: "Amministratori",
+    Builders: "Sviluppatori",
+    Guests: "Ospiti"
+  };
+
+  return labels[name] ?? name;
+}
+
+function translateGroupDescription(description: string | undefined, language: LanguagePreference): string | undefined {
+  if (!description || language !== "it") return description;
+
+  const labels: Record<string, string> = {
+    "Full operational access": "Accesso operativo completo",
+    "Can use everyday local models": "Può utilizzare i modelli locali di uso quotidiano",
+    "Restricted demo access": "Accesso dimostrativo limitato"
+  };
+
+  return labels[description] ?? description;
+}
+
+function translateDiagnosticLabel(label: string): string {
+  const labels: Record<string, string> = {
+    "Backend health": "Stato del backend",
+    "Model inventory": "Inventario dei modelli",
+    "Storage health": "Stato dell'archiviazione",
+    "Tailscale devices": "Dispositivi Tailscale",
+    "Tailscale status": "Stato di Tailscale"
+  };
+
+  return labels[label] ?? label;
 }
 
 function getModelRuntimeAction(isPending: boolean, variables: UpdateModelAccessInput | undefined, modelName: string): ModelRuntimeAction | null {

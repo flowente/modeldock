@@ -44,6 +44,12 @@ ModelDock currently includes:
   - Open WebUI chat URL;
   - light/dark theme;
 - Diagnostics and tests around core behavior.
+- Full-screen guided first-run setup:
+  - detects and starts Ollama, installing it when supported and missing;
+  - prepares and starts a managed Open WebUI instance;
+  - creates the first local chat administrator without storing the password;
+  - verifies the local Tailscale connection and detects the private server URL;
+  - prepares a client invitation message.
 
 ## What ModelDock is not yet
 
@@ -53,26 +59,51 @@ For now, Open WebUI remains the chat surface. ModelDock is the control surface a
 
 Post-MVP work can add:
 
-- Open WebUI account synchronization;
+- broader Open WebUI account and permission synchronization;
 - persistent ModelDock users;
 - durable database storage;
 - Tailscale ACL/tag management;
 - GPU telemetry;
-- packaged desktop/server installer.
+- a packaged desktop/server installer that removes the Node.js prerequisite.
 
 ## Requirements
 
 - Node.js 24 or newer.
 - pnpm 11.
-- Ollama for real model management.
-- Tailscale for real device management.
-- Open WebUI if you want the chat link and health check to be active.
+- Windows 10/11 or macOS for the current guided installer path.
+- Internet access during the first setup.
+
+Ollama and Open WebUI do not need to be installed beforehand: the guided setup detects existing installations and prepares what is missing. Tailscale is installed or opened through its official application because its device login can use Google, GitHub or another identity provider.
 
 ## Quick start
 
-```powershell
+1. Clone or download this repository.
+2. Open a terminal in the `modeldock` folder.
+3. Enable pnpm and install the project:
+
+```text
+corepack enable
+corepack prepare pnpm@11.19.0 --activate
 pnpm install
+```
+
+4. Create the local environment file.
+
+Windows PowerShell:
+
+```powershell
 Copy-Item .env.example .env
+```
+
+macOS:
+
+```bash
+cp .env.example .env
+```
+
+5. Start ModelDock:
+
+```text
 pnpm dev
 ```
 
@@ -98,12 +129,12 @@ Start from:
 .env.example
 ```
 
-Important keys:
+The defaults are sufficient for the guided local setup. Advanced keys include:
 
 - `MODELDOCK_OLLAMA_MODE`
 - `MODELDOCK_OLLAMA_BASE_URL`
 - `MODELDOCK_TAILSCALE_MODE`
-- `MODELDOCK_TAILSCALE_API_TOKEN`
+- `MODELDOCK_TAILSCALE_API_TOKEN` (optional, for remote device administration)
 - `MODELDOCK_TAILSCALE_TAILNET`
 - `MODELDOCK_OPENWEBUI_BASE_URL`
 
@@ -117,11 +148,11 @@ Typical local server setup:
 MODELDOCK_OLLAMA_MODE=auto
 MODELDOCK_OLLAMA_BASE_URL=http://127.0.0.1:11434
 
-MODELDOCK_TAILSCALE_MODE=api
+MODELDOCK_TAILSCALE_MODE=auto
 MODELDOCK_TAILSCALE_TAILNET=-
-MODELDOCK_TAILSCALE_API_TOKEN=your_tailscale_api_token
+MODELDOCK_TAILSCALE_API_TOKEN=
 
-MODELDOCK_OPENWEBUI_BASE_URL=http://127.0.0.1:3000
+MODELDOCK_OPENWEBUI_BASE_URL=
 ```
 
 Then run:
@@ -129,6 +160,8 @@ Then run:
 ```powershell
 pnpm dev
 ```
+
+Open `http://127.0.0.1:5173/#welcome` and follow the guided setup. ModelDock stores generated local integration values in `.env`; passwords are not persisted.
 
 See [Server Setup](docs/SERVER_SETUP.md) for the full server/client workflow.
 

@@ -5,6 +5,8 @@ import { createComponentHealth, ModelDockError } from "@modeldock/core";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_TAILSCALE_API_BASE_URL = "https://api.tailscale.com/api/v2";
+const TAILSCALE_STATUS_ARGS = ["status", "--json"];
+const WINDOWS_TAILSCALE_EXE = "C:\\Program Files\\Tailscale\\tailscale.exe";
 
 interface TailscaleStatusJson {
   BackendState?: string;
@@ -108,12 +110,15 @@ export class TailscaleCliGateway implements TailscaleGateway {
         this.clock
       );
     } catch (error) {
+      const cliError = getTailscaleCliErrorDetails(error);
+      const accessDenied = cliError.error.includes("Access is denied");
+
       return createComponentHealth(
         {
           name: "tailscale",
-          status: "unavailable",
-          message: "Tailscale CLI is not reachable",
-          details: { error: error instanceof Error ? error.message : String(error) }
+          status: accessDenied ? "degraded" : "unavailable",
+          message: accessDenied ? "Tailscale is installed, but local status access is denied" : "Tailscale CLI is not reachable",
+          details: cliError
         },
         this.clock
       );
@@ -138,12 +143,21 @@ export class TailscaleCliGateway implements TailscaleGateway {
   }
 
   private async readStatus(): Promise<TailscaleStatusJson> {
-    const { stdout } = await execFileAsync("tailscale", ["status", "--json"], {
-      timeout: 5_000,
-      windowsHide: true
-    });
+    let lastError: unknown;
 
-    return JSON.parse(stdout) as TailscaleStatusJson;
+    for (const command of getTailscaleCommandCandidates()) {
+      try {
+        return await readStatusFromCommand(command);
+      } catch (error) {
+        lastError = error;
+
+        if (getTailscaleCliErrorDetails(error).accessDenied) {
+          break;
+        }
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private mapDevice(
@@ -168,6 +182,56 @@ export class TailscaleCliGateway implements TailscaleGateway {
       lastSeen: device.LastSeen
     };
   }
+}
+
+async function readStatusFromCommand(command: string): Promise<TailscaleStatusJson> {
+  try {
+    const { stdout } = await execFileAsync(command, TAILSCALE_STATUS_ARGS, {
+      timeout: 8_000,
+      windowsHide: true
+    });
+
+    return JSON.parse(stdout) as TailscaleStatusJson;
+  } catch (error) {
+    const stdout = getExecStdout(error);
+
+    if (stdout) {
+      return JSON.parse(stdout) as TailscaleStatusJson;
+    }
+
+    throw error;
+  }
+}
+
+function getTailscaleCommandCandidates(): string[] {
+  if (process.platform !== "win32") {
+    return ["tailscale"];
+  }
+
+  return ["tailscale.exe", WINDOWS_TAILSCALE_EXE];
+}
+
+function getExecStdout(error: unknown): string | undefined {
+  const stdout = (error as { stdout?: unknown }).stdout;
+
+  return typeof stdout === "string" && stdout.trim() ? stdout : undefined;
+}
+
+function getTailscaleCliErrorDetails(error: unknown): { accessDenied: boolean; error: string } {
+  const stdout = (error as { stdout?: unknown }).stdout;
+  const stderr = (error as { stderr?: unknown }).stderr;
+  const message = error instanceof Error ? error.message : String(error);
+  const output =
+    typeof stderr === "string" && stderr.trim()
+      ? stderr.trim()
+      : typeof stdout === "string" && stdout.trim()
+        ? stdout.trim()
+        : message;
+
+  return {
+    accessDenied: output.includes("Access is denied"),
+    error: output
+  };
 }
 
 export class TailscaleApiGateway implements TailscaleGateway {

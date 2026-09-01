@@ -1,4 +1,5 @@
 import type { ModelPullJob } from "../api.js";
+import type { LanguagePreference } from "../types.js";
 
 export function isPullJobActive(job: ModelPullJob | undefined): boolean {
   return job?.status === "queued" || job?.status === "running";
@@ -21,24 +22,26 @@ export function getPullFeedback({
   fallbackMessage,
   isStarting,
   pullFailed,
-  pullJob
+  pullJob,
+  language = "en"
 }: {
   deleteFailed: boolean;
   fallbackMessage: string | null;
   isStarting: boolean;
   pullFailed: boolean;
   pullJob?: ModelPullJob;
+  language?: LanguagePreference;
 }): string {
   if (isStarting) {
-    return "Starting pull…";
+    return language === "it" ? "Avvio del download…" : "Starting pull…";
   }
 
   if (pullJob?.status === "failed") {
-    return `${pullJob.model}: Pull failed`;
+    return `${pullJob.model}: ${language === "it" ? "Download non riuscito" : "Pull failed"}`;
   }
 
   if (pullJob?.status === "succeeded") {
-    return `${pullJob.model}: Pull completed`;
+    return `${pullJob.model}: ${language === "it" ? "Download completato" : "Pull completed"}`;
   }
 
   if (pullJob && isPullJobActive(pullJob)) {
@@ -46,11 +49,11 @@ export function getPullFeedback({
   }
 
   if (pullFailed) {
-    return "Pull failed";
+    return language === "it" ? "Download non riuscito" : "Pull failed";
   }
 
   if (deleteFailed) {
-    return "Delete failed";
+    return language === "it" ? "Eliminazione non riuscita" : "Delete failed";
   }
 
   return fallbackMessage ?? "";
