@@ -3,7 +3,19 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
-import { buildApp, resolveOpenWebUILocalInstall, resolveUvxCommandCandidates } from "./app.ts";
+import { buildApp, resolveOpenWebUILocalInstall, resolveUvxCommandCandidates, summarizeOpenWebUIRuntimeFailure } from "./app.ts";
+
+describe("Open WebUI runtime diagnostics", () => {
+  it("keeps the useful error instead of only the exit code", () => {
+    expect(
+      summarizeOpenWebUIRuntimeFailure([
+        "Downloading packages",
+        "error: failed to build a required dependency",
+        "Open WebUI process exited with code 1."
+      ])
+    ).toContain("failed to build a required dependency");
+  });
+});
 
 describe("ModelDock API", () => {
   let app: FastifyInstance;

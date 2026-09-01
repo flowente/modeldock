@@ -1501,8 +1501,12 @@ async function waitForManagedChat(input: {
     }
 
     if (attempt > 2 && !input.isRuntimeAlive()) {
-      const lastLogLine = input.getRuntimeLog().at(-1);
-      throw new Error(lastLogLine ? `La chat si è arrestata durante l'avvio. ${lastLogLine}` : "La chat si è arrestata durante l'avvio.");
+      const diagnostic = summarizeOpenWebUIRuntimeFailure(input.getRuntimeLog());
+      throw new Error(
+        diagnostic
+          ? `La chat si è arrestata durante l'avvio. Dettaglio: ${diagnostic}`
+          : "La chat si è arrestata durante l'avvio senza restituire un dettaglio tecnico."
+      );
     }
 
     const elapsedSeconds = attempt * 2;
@@ -1518,6 +1522,18 @@ async function waitForManagedChat(input: {
   }
 
   return false;
+}
+
+export function summarizeOpenWebUIRuntimeFailure(log: string[]): string | undefined {
+  const lines = log
+    .flatMap((entry) => entry.split(/\r?\n/))
+    .map((line) => line.replace(/\u001b\[[0-9;]*m/g, "").trim())
+    .filter(Boolean);
+  const informativeLines = lines.filter((line) => !/^Open WebUI process exited with code /i.test(line));
+  const selectedLines = (informativeLines.length > 0 ? informativeLines : lines).slice(-4);
+  const summary = selectedLines.join(" — ");
+
+  return summary ? summary.slice(-1200) : undefined;
 }
 
 async function startTailscaleLoginForCurrentPlatform(): Promise<{ message: string; started: boolean }> {
