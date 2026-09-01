@@ -5,9 +5,9 @@ import { arch, homedir, platform, tmpdir } from "node:os";
 import { basename, dirname, join, posix, win32 } from "node:path";
 import { spawn } from "node:child_process";
 
-const DEFAULT_RUNTIME_VERSION = "1";
+const DEFAULT_RUNTIME_VERSION = "2";
 const DEFAULT_MANIFEST_URL =
-  "https://github.com/flowente/modeldock/releases/download/openwebui-runtime-v1/manifest.json";
+  "https://github.com/flowente/modeldock/releases/download/openwebui-runtime-v2/manifest.json";
 
 export type OpenWebUIRuntimeTarget = "windows-x64" | "macos-arm64" | "macos-x64";
 

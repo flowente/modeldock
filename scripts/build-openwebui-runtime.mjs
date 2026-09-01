@@ -1,9 +1,11 @@
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 
 const target = process.argv[2];
-const runtimeVersion = process.argv[3] ?? "1";
+const runtimeVersion = process.argv[3] ?? "2";
 const supportedTargets = new Set(["windows-x64", "macos-arm64", "macos-x64"]);
 
 if (!target || !supportedTargets.has(target)) {
@@ -71,6 +73,7 @@ run(
     PYTHONPATH: sitePackagesDir
   }
 );
+await verifyServerStartup(bundlePython, sitePackagesDir, targetRoot);
 
 writeFileSync(
   join(bundleDir, "runtime.json"),
@@ -97,4 +100,61 @@ function run(command, args, env) {
     env,
     stdio: ["ignore", "pipe", "inherit"]
   });
+}
+
+async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
+  const smokeDataDir = join(buildRoot, "smoke-data");
+  const port = 18080;
+  const child = spawn(pythonPath, ["-m", "open_webui", "serve", "--host", "127.0.0.1", "--port", String(port)], {
+    cwd: repositoryRoot,
+    env: {
+      ...process.env,
+      DATA_DIR: smokeDataDir,
+      ENABLE_API_KEYS: "true",
+      ENABLE_SIGNUP: "false",
+      OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+      PORT: String(port),
+      PYTHONPATH: sitePackagesPath,
+      WEBUI_SECRET_KEY: "modeldock-runtime-build-smoke-test"
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  });
+  const logLines = [];
+  const capture = (chunk) => {
+    logLines.push(...chunk.toString().split(/\r?\n/).filter(Boolean));
+    logLines.splice(0, Math.max(logLines.length - 30, 0));
+  };
+  child.stdout.on("data", capture);
+  child.stderr.on("data", capture);
+
+  try {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      if (child.exitCode !== null) {
+        throw new Error(`Open WebUI smoke server exited with code ${child.exitCode}.\n${logLines.join("\n")}`);
+      }
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) });
+
+        if (response.status < 500) {
+          process.stdout.write(`Open WebUI HTTP smoke test succeeded with status ${response.status}.\n`);
+          return;
+        }
+      } catch {
+        // The server is still running its first database migration or loading modules.
+      }
+
+      await delay(2_000);
+    }
+
+    throw new Error(`Open WebUI did not answer within the smoke-test timeout.\n${logLines.join("\n")}`);
+  } finally {
+    if (child.exitCode === null) {
+      child.kill();
+      await Promise.race([once(child, "exit"), delay(10_000)]);
+    }
+
+    rmSync(smokeDataDir, { force: true, recursive: true });
+  }
 }

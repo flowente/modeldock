@@ -6,7 +6,7 @@ on:
       runtime_version:
         description: Runtime pack version
         required: true
-        default: "1"
+        default: "2"
   push:
     tags:
       - "openwebui-runtime-v*"
