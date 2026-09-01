@@ -7,6 +7,9 @@ on:
         description: Runtime pack version
         required: true
         default: "1"
+  push:
+    tags:
+      - "openwebui-runtime-v*"
 
 permissions:
   contents: write
@@ -27,11 +30,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve runtime version
+        id: runtime-version
+        env:
+          INPUT_RUNTIME_VERSION: ${{ inputs.runtime_version }}
+        run: node scripts/resolve-openwebui-runtime-version.mjs
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.8.22"
       - name: Build verified runtime pack
-        run: node scripts/build-openwebui-runtime.mjs "${{ matrix.target }}" "${{ inputs.runtime_version }}"
+        run: node scripts/build-openwebui-runtime.mjs "${{ matrix.target }}" "${{ steps.runtime-version.outputs.version }}"
       - uses: actions/upload-artifact@v4
         with:
           name: modeldock-openwebui-${{ matrix.target }}
@@ -45,6 +53,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve runtime version
+        id: runtime-version
+        env:
+          INPUT_RUNTIME_VERSION: ${{ inputs.runtime_version }}
+        run: node scripts/resolve-openwebui-runtime-version.mjs
       - uses: actions/download-artifact@v4
         with:
           path: runtime-assets
@@ -53,11 +66,11 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          node scripts/create-openwebui-runtime-manifest.mjs "${{ inputs.runtime_version }}" "openwebui-runtime-v${{ inputs.runtime_version }}" runtime-assets
+          node scripts/create-openwebui-runtime-manifest.mjs "${{ steps.runtime-version.outputs.version }}" "openwebui-runtime-v${{ steps.runtime-version.outputs.version }}" runtime-assets
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: openwebui-runtime-v${{ inputs.runtime_version }}
+          TAG: openwebui-runtime-v${{ steps.runtime-version.outputs.version }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Open WebUI runtime v${{ inputs.runtime_version }}" --notes "Verified Open WebUI runtime packs used by ModelDock."
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Open WebUI runtime v${{ steps.runtime-version.outputs.version }}" --notes "Verified Open WebUI runtime packs used by ModelDock."
           gh release upload "$TAG" runtime-assets/*.tar.gz runtime-assets/manifest.json --clobber
