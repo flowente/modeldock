@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 
 const target = process.argv[2];
-const runtimeVersion = process.argv[3] ?? "2";
+const runtimeVersion = process.argv[3] ?? "4";
 const supportedTargets = new Set(["windows-x64", "macos-arm64", "macos-x64"]);
 
 if (!target || !supportedTargets.has(target)) {
@@ -111,7 +111,10 @@ function run(command, args, env) {
 async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
   const smokeDataDir = join(buildRoot, "smoke-data");
   const port = 18080;
-  const child = spawn(pythonPath, ["-m", "open_webui", "serve", "--host", "127.0.0.1", "--port", String(port)], {
+  const child = spawn(
+    pythonPath,
+    ["-c", "from open_webui import app; app()", "serve", "--host", "127.0.0.1", "--port", String(port)],
+    {
     cwd: repositoryRoot,
     env: {
       ...process.env,
@@ -124,8 +127,9 @@ async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
       WEBUI_SECRET_KEY: "modeldock-runtime-build-smoke-test"
     },
     stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true
-  });
+      windowsHide: true
+    }
+  );
   const logLines = [];
   const capture = (chunk) => {
     logLines.push(...chunk.toString().split(/\r?\n/).filter(Boolean));

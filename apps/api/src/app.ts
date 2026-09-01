@@ -1321,7 +1321,7 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
       const commandArgs = input.executablePath
         ? serveArgs
         : usePreparedRuntime
-          ? ["-m", "open_webui", ...serveArgs]
+          ? ["-c", "from open_webui import app; app()", ...serveArgs]
           : managedArgs;
 
       appendLog(
