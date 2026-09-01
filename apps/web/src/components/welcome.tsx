@@ -456,6 +456,12 @@ function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: L
   }
 
   if (status.phase === "starting_chat") {
+    if (status.message.startsWith("The first chat start failed")) {
+      return language === "it"
+        ? "Il primo avvio non è riuscito. ModelDock sta provando automaticamente una versione compatibile con macOS…"
+        : "The first start failed. ModelDock is automatically trying a macOS-compatible version…";
+    }
+
     if (status.progress < 70) {
       return language === "it" ? "Download dei componenti della chat…" : "Downloading the chat components…";
     }

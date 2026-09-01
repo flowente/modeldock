@@ -58,12 +58,15 @@ interface OpenWebUIRuntimeController {
   isStartedByModelDock(): boolean;
   isUvAvailable(): Promise<boolean>;
   start(input: {
+    compatibilityMode?: boolean;
     dataDir: string;
     executablePath?: string;
     installPath?: string;
     port: number;
   }): Promise<{ started: boolean; message: string }>;
 }
+
+const OPEN_WEBUI_COMPATIBILITY_VERSION = "0.11.1";
 
 interface RuntimeDependencies {
   clock: Clock;
@@ -1222,9 +1225,29 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
       }
 
       const serveArgs = ["serve", "--host", "0.0.0.0", "--port", String(input.port)];
+      const managedArgs = input.compatibilityMode
+        ? [
+            "--python",
+            "3.11",
+            "--with",
+            "greenlet",
+            "--with",
+            "itsdangerous",
+            "--with",
+            "beautifulsoup4",
+            `open-webui@${OPEN_WEBUI_COMPATIBILITY_VERSION}`,
+            ...serveArgs
+          ]
+        : ["--python", "3.11", "open-webui@latest", ...serveArgs];
 
-      appendLog(input.executablePath ? `Starting Open WebUI from ${input.installPath ?? "local install"}.` : "Starting Open WebUI from ModelDock.");
-      processHandle = spawn(command, input.executablePath ? serveArgs : ["--python", "3.11", "open-webui@latest", ...serveArgs], {
+      appendLog(
+        input.executablePath
+          ? `Starting Open WebUI from ${input.installPath ?? "local install"}.`
+          : input.compatibilityMode
+            ? `Retrying Open WebUI with the compatible ${OPEN_WEBUI_COMPATIBILITY_VERSION} runtime.`
+            : "Starting Open WebUI from ModelDock."
+      );
+      processHandle = spawn(command, input.executablePath ? serveArgs : managedArgs, {
         env: {
           ...process.env,
           DATA_DIR: input.dataDir,
@@ -1293,14 +1316,42 @@ async function runManagedServerSetup(input: {
     throw new Error(startResult.message);
   }
 
-  const chatReady = await waitForManagedChat({
-    clock: input.clock,
-    fetchImpl: input.fetchImpl,
-    getRuntimeLog: input.openWebUIRuntime.getLog,
-    isRuntimeAlive: input.openWebUIRuntime.isStartedByModelDock,
-    update: input.update,
-    url: baseUrl
-  });
+  let chatReady: boolean;
+
+  try {
+    chatReady = await waitForManagedChat({
+      clock: input.clock,
+      fetchImpl: input.fetchImpl,
+      getRuntimeLog: input.openWebUIRuntime.getLog,
+      isRuntimeAlive: input.openWebUIRuntime.isStartedByModelDock,
+      update: input.update,
+      url: baseUrl
+    });
+  } catch {
+    input.update({
+      phase: "starting_chat",
+      progress: 68,
+      message: "The first chat start failed. Retrying with the macOS-compatible runtime."
+    });
+    const fallbackResult = await input.openWebUIRuntime.start({
+      compatibilityMode: true,
+      dataDir: input.openWebUIRuntime.getDataDir(),
+      port: 8080
+    });
+
+    if (!fallbackResult.started) {
+      throw new Error(fallbackResult.message);
+    }
+
+    chatReady = await waitForManagedChat({
+      clock: input.clock,
+      fetchImpl: input.fetchImpl,
+      getRuntimeLog: input.openWebUIRuntime.getLog,
+      isRuntimeAlive: input.openWebUIRuntime.isStartedByModelDock,
+      update: input.update,
+      url: baseUrl
+    });
+  }
 
   if (!chatReady) {
     throw new Error("The chat was started but did not become ready in time. ModelDock can retry without downloading it again.");
