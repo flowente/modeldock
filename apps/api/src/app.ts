@@ -1521,6 +1521,26 @@ async function waitForManagedChat(input: {
 }
 
 async function startTailscaleLoginForCurrentPlatform(): Promise<{ message: string; started: boolean }> {
+  if (platform() === "darwin" && existsSync("/Applications/Tailscale.app")) {
+    try {
+      const child = spawn("open", ["-a", "Tailscale"], {
+        detached: true,
+        stdio: "ignore"
+      });
+      child.unref();
+
+      return {
+        started: true,
+        message: "Tailscale is open. Start a fresh sign-in from the app and use the new browser tab."
+      };
+    } catch (error) {
+      return {
+        started: false,
+        message: error instanceof Error ? error.message : "Tailscale could not be opened."
+      };
+    }
+  }
+
   const command = await findAvailableCommand(resolveTailscaleCommandCandidatesForSetup());
 
   if (!command) {
@@ -1528,14 +1548,14 @@ async function startTailscaleLoginForCurrentPlatform(): Promise<{ message: strin
   }
 
   try {
-    const child = spawn(command, ["up"], {
+    const child = spawn(command, ["login"], {
       detached: true,
       stdio: "ignore",
       windowsHide: true
     });
     child.unref();
 
-    return { started: true, message: "Tailscale sign-in has been opened." };
+    return { started: true, message: "A fresh Tailscale sign-in has been opened." };
   } catch (error) {
     return {
       started: false,

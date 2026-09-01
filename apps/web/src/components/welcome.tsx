@@ -281,8 +281,8 @@ export function WelcomeExperience({
       setTailscaleSetupMessage(
         result.started
           ? settings.language === "it"
-            ? "Completa l'accesso nella finestra di Tailscale scegliendo Google, GitHub o il provider che preferisci, poi premi Verifica connessione."
-            : "Complete sign-in in Tailscale using Google, GitHub or your preferred provider, then press Check connection."
+            ? "Tailscale è aperto. Avvia un nuovo accesso dalla sua app e usa soltanto la nuova scheda del browser; i link aperti in precedenza possono risultare scaduti. Poi premi Verifica connessione."
+            : "Tailscale is open. Start a fresh sign-in from its app and use only the new browser tab; previously opened links may be expired. Then press Check connection."
           : result.message
       );
     } catch {
@@ -298,7 +298,7 @@ export function WelcomeExperience({
       : tailscaleSetup?.loggedIn
         ? copy.next
         : tailscaleSetup?.installed
-          ? settings.language === "it" ? "Accedi con Tailscale" : "Sign in with Tailscale"
+          ? settings.language === "it" ? "Apri Tailscale" : "Open Tailscale"
           : settings.language === "it" ? "Scarica Tailscale" : "Download Tailscale"
     : activeStep === 2
     ? serverSetup?.state === "succeeded"
