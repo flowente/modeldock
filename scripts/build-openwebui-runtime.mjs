@@ -73,7 +73,13 @@ run(
     PYTHONPATH: sitePackagesDir
   }
 );
-await verifyServerStartup(bundlePython, sitePackagesDir, targetRoot);
+try {
+  await verifyServerStartup(bundlePython, sitePackagesDir, targetRoot);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`::error title=Open WebUI HTTP smoke test failed::${escapeWorkflowCommand(message)}\n`);
+  throw error;
+}
 
 writeFileSync(
   join(bundleDir, "runtime.json"),
@@ -157,4 +163,8 @@ async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
 
     rmSync(smokeDataDir, { force: true, recursive: true });
   }
+}
+
+function escapeWorkflowCommand(value) {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
