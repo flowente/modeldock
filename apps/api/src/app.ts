@@ -68,19 +68,20 @@ interface OpenWebUIRuntimeController {
 
 const OPEN_WEBUI_COMPATIBILITY_VERSION = "0.11.1";
 const OPEN_WEBUI_INTEL_MAC_VERSION = "0.7.2";
+const INTEL_MAC_CRYPTOGRAPHY_VERSION = "48.0.1";
 
 export function resolveManagedOpenWebUIRuntimeProfile(
   platformId: NodeJS.Platform = platform(),
   architecture: NodeJS.Architecture = arch(),
   compatibilityMode = false
 ): {
-  includeCompatibilityDependencies: boolean;
+  extraPackages: string[];
   packageSpec: string;
   profile: "current" | "compatibility" | "intel-mac";
 } {
   if (platformId === "darwin" && architecture === "x64") {
     return {
-      includeCompatibilityDependencies: true,
+      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4", `cryptography==${INTEL_MAC_CRYPTOGRAPHY_VERSION}`],
       packageSpec: `open-webui@${OPEN_WEBUI_INTEL_MAC_VERSION}`,
       profile: "intel-mac"
     };
@@ -88,14 +89,14 @@ export function resolveManagedOpenWebUIRuntimeProfile(
 
   if (compatibilityMode) {
     return {
-      includeCompatibilityDependencies: true,
+      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4"],
       packageSpec: `open-webui@${OPEN_WEBUI_COMPATIBILITY_VERSION}`,
       profile: "compatibility"
     };
   }
 
   return {
-    includeCompatibilityDependencies: false,
+    extraPackages: [],
     packageSpec: "open-webui@latest",
     profile: "current"
   };
@@ -1262,9 +1263,7 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
       const managedArgs = [
         "--python",
         "3.11",
-        ...(runtimeProfile.includeCompatibilityDependencies
-          ? ["--with", "greenlet", "--with", "itsdangerous", "--with", "beautifulsoup4"]
-          : []),
+        ...runtimeProfile.extraPackages.flatMap((packageName) => ["--with", packageName]),
         runtimeProfile.packageSpec,
         ...serveArgs
       ];

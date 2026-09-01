@@ -24,7 +24,7 @@ describe("Open WebUI runtime diagnostics", () => {
 
   it("selects the last runtime with official Intel Mac wheels before starting Open WebUI", () => {
     expect(resolveManagedOpenWebUIRuntimeProfile("darwin", "x64")).toEqual({
-      includeCompatibilityDependencies: true,
+      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4", "cryptography==48.0.1"],
       packageSpec: "open-webui@0.7.2",
       profile: "intel-mac"
     });
@@ -32,7 +32,7 @@ describe("Open WebUI runtime diagnostics", () => {
 
   it("keeps the current Open WebUI runtime on Apple Silicon", () => {
     expect(resolveManagedOpenWebUIRuntimeProfile("darwin", "arm64")).toEqual({
-      includeCompatibilityDependencies: false,
+      extraPackages: [],
       packageSpec: "open-webui@latest",
       profile: "current"
     });
