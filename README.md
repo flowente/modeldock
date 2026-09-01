@@ -77,6 +77,25 @@ Ollama and Open WebUI do not need to be installed beforehand: the guided setup d
 
 ## Quick start
 
+### Double-click launcher
+
+For the simplest first test:
+
+- Windows: download and double-click [`start-modeldock.bat`](start-modeldock.bat).
+- macOS: download [`start-modeldock.command`](start-modeldock.command), allow execution once with `chmod +x start-modeldock.command`, then double-click it.
+
+The launcher can be used inside the cloned repository or downloaded on its own. When downloaded alone it retrieves the current `main` branch into the operating system's local application-data folder. It then:
+
+1. checks Node.js 24 and guides or performs installation where supported;
+2. installs the pinned project dependencies;
+3. creates the local `.env` file if missing;
+4. starts the ModelDock API and interface;
+5. opens `http://127.0.0.1:5173/#welcome` automatically.
+
+Keep the launcher window open while using ModelDock. Closing it stops the local application. These launchers are the MVP distribution path; a later signed desktop package will remove the visible terminal and remaining operating-system warnings.
+
+### Manual installation
+
 1. Clone or download this repository:
 
 ```text
