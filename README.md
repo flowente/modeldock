@@ -77,7 +77,13 @@ Ollama and Open WebUI do not need to be installed beforehand: the guided setup d
 
 ## Quick start
 
-1. Clone or download this repository.
+1. Clone or download this repository:
+
+```text
+git clone https://github.com/flowente/modeldock.git
+cd modeldock
+```
+
 2. Open a terminal in the `modeldock` folder.
 3. Enable pnpm and install the project:
 
