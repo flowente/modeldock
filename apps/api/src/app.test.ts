@@ -3,7 +3,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
-import { buildApp, resolveOpenWebUILocalInstall, resolveUvxCommandCandidates, summarizeOpenWebUIRuntimeFailure } from "./app.ts";
+import {
+  buildApp,
+  resolveManagedOpenWebUIRuntimeProfile,
+  resolveOpenWebUILocalInstall,
+  resolveUvxCommandCandidates,
+  summarizeOpenWebUIRuntimeFailure
+} from "./app.ts";
 
 describe("Open WebUI runtime diagnostics", () => {
   it("keeps the useful error instead of only the exit code", () => {
@@ -14,6 +20,22 @@ describe("Open WebUI runtime diagnostics", () => {
         "Open WebUI process exited with code 1."
       ])
     ).toContain("failed to build a required dependency");
+  });
+
+  it("selects the last runtime with official Intel Mac wheels before starting Open WebUI", () => {
+    expect(resolveManagedOpenWebUIRuntimeProfile("darwin", "x64")).toEqual({
+      includeCompatibilityDependencies: true,
+      packageSpec: "open-webui@0.7.2",
+      profile: "intel-mac"
+    });
+  });
+
+  it("keeps the current Open WebUI runtime on Apple Silicon", () => {
+    expect(resolveManagedOpenWebUIRuntimeProfile("darwin", "arm64")).toEqual({
+      includeCompatibilityDependencies: false,
+      packageSpec: "open-webui@latest",
+      profile: "current"
+    });
   });
 });
 

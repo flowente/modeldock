@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { freemem, homedir, hostname as getOsHostname, platform, totalmem } from "node:os";
+import { arch, freemem, homedir, hostname as getOsHostname, platform, totalmem } from "node:os";
 import { join, posix } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
@@ -67,6 +67,39 @@ interface OpenWebUIRuntimeController {
 }
 
 const OPEN_WEBUI_COMPATIBILITY_VERSION = "0.11.1";
+const OPEN_WEBUI_INTEL_MAC_VERSION = "0.7.2";
+
+export function resolveManagedOpenWebUIRuntimeProfile(
+  platformId: NodeJS.Platform = platform(),
+  architecture: NodeJS.Architecture = arch(),
+  compatibilityMode = false
+): {
+  includeCompatibilityDependencies: boolean;
+  packageSpec: string;
+  profile: "current" | "compatibility" | "intel-mac";
+} {
+  if (platformId === "darwin" && architecture === "x64") {
+    return {
+      includeCompatibilityDependencies: true,
+      packageSpec: `open-webui@${OPEN_WEBUI_INTEL_MAC_VERSION}`,
+      profile: "intel-mac"
+    };
+  }
+
+  if (compatibilityMode) {
+    return {
+      includeCompatibilityDependencies: true,
+      packageSpec: `open-webui@${OPEN_WEBUI_COMPATIBILITY_VERSION}`,
+      profile: "compatibility"
+    };
+  }
+
+  return {
+    includeCompatibilityDependencies: false,
+    packageSpec: "open-webui@latest",
+    profile: "current"
+  };
+}
 
 interface RuntimeDependencies {
   clock: Clock;
@@ -1225,27 +1258,25 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
       }
 
       const serveArgs = ["serve", "--host", "0.0.0.0", "--port", String(input.port)];
-      const managedArgs = input.compatibilityMode
-        ? [
-            "--python",
-            "3.11",
-            "--with",
-            "greenlet",
-            "--with",
-            "itsdangerous",
-            "--with",
-            "beautifulsoup4",
-            `open-webui@${OPEN_WEBUI_COMPATIBILITY_VERSION}`,
-            ...serveArgs
-          ]
-        : ["--python", "3.11", "open-webui@latest", ...serveArgs];
+      const runtimeProfile = resolveManagedOpenWebUIRuntimeProfile(platform(), arch(), input.compatibilityMode);
+      const managedArgs = [
+        "--python",
+        "3.11",
+        ...(runtimeProfile.includeCompatibilityDependencies
+          ? ["--with", "greenlet", "--with", "itsdangerous", "--with", "beautifulsoup4"]
+          : []),
+        runtimeProfile.packageSpec,
+        ...serveArgs
+      ];
 
       appendLog(
         input.executablePath
           ? `Starting Open WebUI from ${input.installPath ?? "local install"}.`
-          : input.compatibilityMode
-            ? `Retrying Open WebUI with the compatible ${OPEN_WEBUI_COMPATIBILITY_VERSION} runtime.`
-            : "Starting Open WebUI from ModelDock."
+          : runtimeProfile.profile === "intel-mac"
+            ? `Starting Open WebUI ${OPEN_WEBUI_INTEL_MAC_VERSION}, the compatible runtime for Intel Macs.`
+            : runtimeProfile.profile === "compatibility"
+              ? `Retrying Open WebUI with the compatible ${OPEN_WEBUI_COMPATIBILITY_VERSION} runtime.`
+              : "Starting Open WebUI from ModelDock."
       );
       processHandle = spawn(command, input.executablePath ? serveArgs : managedArgs, {
         env: {
@@ -1306,7 +1337,14 @@ async function runManagedServerSetup(input: {
   input.update({ ollamaReady: true, phase: "installing_chat", progress: 48, message: "Preparing the administrator chat." });
   await ensureUvIsAvailable(input.openWebUIRuntime);
 
-  input.update({ phase: "starting_chat", progress: 64, message: "Starting the local chat for the first time." });
+  const usesIntelMacRuntime = platform() === "darwin" && arch() === "x64";
+  input.update({
+    phase: "starting_chat",
+    progress: 64,
+    message: usesIntelMacRuntime
+      ? "Intel Mac detected. Starting the compatible local chat runtime."
+      : "Starting the local chat for the first time."
+  });
   const startResult = await input.openWebUIRuntime.start({
     dataDir: input.openWebUIRuntime.getDataDir(),
     port: 8080
@@ -1327,7 +1365,11 @@ async function runManagedServerSetup(input: {
       update: input.update,
       url: baseUrl
     });
-  } catch {
+  } catch (error) {
+    if (usesIntelMacRuntime) {
+      throw error;
+    }
+
     input.update({
       phase: "starting_chat",
       progress: 68,
