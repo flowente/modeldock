@@ -456,10 +456,10 @@ function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: L
   }
 
   if (status.phase === "starting_chat") {
-    if (status.message.startsWith("The first chat start failed")) {
+    if (status.message.startsWith("The prepared chat start failed")) {
       return language === "it"
-        ? "Il primo avvio non è riuscito. ModelDock sta provando automaticamente una versione compatibile con macOS…"
-        : "The first start failed. ModelDock is automatically trying a macOS-compatible version…";
+        ? "La chat già preparata non si è avviata. ModelDock sta usando automaticamente l'installer compatibile…"
+        : "The prepared chat did not start. ModelDock is automatically using the compatible installer…";
     }
 
     if (status.progress < 70) {
@@ -471,6 +471,19 @@ function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: L
     }
 
     return language === "it" ? "Completamento del primo avvio. ModelDock sta ancora lavorando…" : "Finishing the first start. ModelDock is still working…";
+  }
+
+  if (status.phase === "installing_chat" && status.message.startsWith("Downloading the prepared chat runtime")) {
+    const downloadPercent = status.message.match(/\((\d+)%\)/)?.[1];
+    const suffix = downloadPercent ? ` ${downloadPercent}%` : "";
+
+    return language === "it"
+      ? `Download della chat già preparata…${suffix}`
+      : `Downloading the prepared chat…${suffix}`;
+  }
+
+  if (status.phase === "installing_chat" && status.message.startsWith("Installing the prepared chat runtime")) {
+    return language === "it" ? "Installazione della chat già verificata…" : "Installing the verified chat runtime…";
   }
 
   const messages: Record<ManagedServerSetupStatus["phase"], [string, string]> = {

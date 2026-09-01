@@ -130,6 +130,7 @@ export interface OpenWebUIRuntimeStatus {
   executablePath?: string;
   installPath?: string;
   installed: boolean;
+  managedRuntimeAvailable: boolean;
   port: number;
   uvAvailable: boolean;
   running: boolean;

@@ -1,0 +1,63 @@
+name: Build Open WebUI runtime packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_version:
+        description: Runtime pack version
+        required: true
+        default: "1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-2025
+          - target: macos-arm64
+            runner: macos-15
+          - target: macos-x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.8.22"
+      - name: Build verified runtime pack
+        run: node scripts/build-openwebui-runtime.mjs "${{ matrix.target }}" "${{ inputs.runtime_version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modeldock-openwebui-${{ matrix.target }}
+          path: .runtime-build/${{ matrix.target }}/modeldock-openwebui-${{ matrix.target }}.tar.gz
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish runtime release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: runtime-assets
+          merge-multiple: true
+      - name: Create verified manifest
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node scripts/create-openwebui-runtime-manifest.mjs "${{ inputs.runtime_version }}" "openwebui-runtime-v${{ inputs.runtime_version }}" runtime-assets
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: openwebui-runtime-v${{ inputs.runtime_version }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Open WebUI runtime v${{ inputs.runtime_version }}" --notes "Verified Open WebUI runtime packs used by ModelDock."
+          gh release upload "$TAG" runtime-assets/*.tar.gz runtime-assets/manifest.json --clobber

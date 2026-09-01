@@ -2,7 +2,9 @@
 
 Questo documento serve a riprendere il progetto da un'altra chat o da un'altra sessione senza perdere il contesto decisionale.
 
-Ultimo aggiornamento: 2026-08-31.
+Ultimo aggiornamento: 2026-09-02.
+
+Aggiornamento distribuzione: Open WebUI usa runtime pack preconfezionati per Windows x64, Mac Apple Silicon e Mac Intel. I pack vivono nelle GitHub Releases, vengono verificati tramite SHA-256 e hanno il vecchio installer `uv` come fallback. Il workflow è `.github/workflows/openwebui-runtime.yml`; il downloader è `apps/api/src/openwebui-runtime.ts`.
 
 ## Obiettivo del prodotto
 

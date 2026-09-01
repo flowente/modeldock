@@ -68,6 +68,18 @@ The API supports fake gateways for deterministic tests and real adapters for loc
 
 Real provider credentials stay server-side in `.env`.
 
+## Prepared Chat Runtime
+
+Open WebUI is not vendored into the source repository. A release workflow builds one immutable runtime pack for each supported architecture:
+
+- `windows-x64`;
+- `macos-arm64`;
+- `macos-x64`.
+
+Each pack contains a portable Python 3.11 runtime and a resolved Open WebUI installation. The release manifest records the asset URL, byte size, executable path and SHA-256 digest. The backend downloads the matching pack with visible progress, verifies it before extraction and stores it in the operating system's local application-data directory.
+
+The existing `uv` installation path remains a fallback. This keeps first-run setup resilient if a release asset is unavailable, while normal users avoid dependency resolution and local compilation.
+
 ## Resource Metrics
 
 The backend can expose CPU and RAM metrics directly from the host runtime. GPU metrics should stay behind provider-specific adapters because Windows, NVIDIA, AMD, ROCm and Apple hardware expose telemetry differently.

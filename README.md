@@ -73,6 +73,8 @@ Post-MVP work can add:
 
 The double-click launchers include a verified portable Node.js runtime when the computer does not already have a compatible version. They do not install Node.js system-wide. Manual installation requires Node.js 24 or newer; pnpm is executed at the version pinned by this repository.
 
+Open WebUI is distributed through architecture-specific runtime packs for Windows x64, Apple Silicon and Intel Macs. ModelDock selects the correct pack, shows its real download progress, verifies its SHA-256 checksum and stores it outside the application checkout. If a pack is temporarily unavailable, the guided setup falls back to the existing `uv` installer path instead of blocking the user.
+
 Ollama and Open WebUI do not need to be installed beforehand: the guided setup detects existing installations and prepares what is missing. Tailscale is installed or opened through its official application because its device login can use Google, GitHub or another identity provider.
 
 ## Quick start
@@ -91,6 +93,8 @@ The launcher can be used inside the cloned repository or downloaded on its own. 
 3. creates the local `.env` file if missing;
 4. creates a stable production build and starts both the ModelDock API and interface;
 5. waits until both services respond, then opens `http://127.0.0.1:4173/#welcome` automatically.
+
+During the welcome flow, the first chat setup downloads a prepared Open WebUI runtime. This can be large, but it happens once; later starts reuse the verified local copy. Runtime packs are published as GitHub Release assets by `.github/workflows/openwebui-runtime.yml` and are never committed to the source repository.
 
 Keep the launcher window open while using ModelDock. Closing it stops the local application. These launchers are the MVP distribution path; a later signed desktop package will remove the visible terminal and remaining operating-system warnings.
 
@@ -162,6 +166,7 @@ The defaults are sufficient for the guided local setup. Advanced keys include:
 - `MODELDOCK_TAILSCALE_API_TOKEN` (optional, for remote device administration)
 - `MODELDOCK_TAILSCALE_TAILNET`
 - `MODELDOCK_OPENWEBUI_BASE_URL`
+- `MODELDOCK_OPENWEBUI_RUNTIME_MANIFEST_URL` (optional development/self-hosted override)
 
 Never commit real tokens or auth keys.
 

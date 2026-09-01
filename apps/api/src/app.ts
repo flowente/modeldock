@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, freemem, homedir, hostname as getOsHostname, platform, totalmem } from "node:os";
-import { join, posix } from "node:path";
+import { delimiter, join, posix } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   buildSystemStatus,
@@ -32,6 +32,11 @@ import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
 import { TailscaleApiGateway, TailscaleCliGateway } from "@modeldock/tailscale-adapter";
 import { createFakeDependencies } from "@modeldock/testing";
+import {
+  prepareOpenWebUIRuntimeBundle,
+  type PreparedOpenWebUIRuntime,
+  type RuntimePreparationProgress
+} from "./openwebui-runtime.ts";
 
 export type OllamaRuntimeMode = "fake" | "real" | "auto";
 export type TailscaleRuntimeMode = "fake" | "real" | "cli" | "api" | "auto";
@@ -55,8 +60,10 @@ export interface BuildAppOptions {
 interface OpenWebUIRuntimeController {
   getDataDir(): string;
   getLog(): string[];
+  hasPreparedRuntime?(): boolean;
   isStartedByModelDock(): boolean;
   isUvAvailable(): Promise<boolean>;
+  prepareManagedRuntime?(onProgress?: (progress: RuntimePreparationProgress) => void): Promise<boolean>;
   start(input: {
     compatibilityMode?: boolean;
     dataDir: string;
@@ -444,6 +451,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return currentStatus;
     }
 
+    if (!localInstall.installed) {
+      const preparedRuntimeAvailable = (await openWebUIRuntime.prepareManagedRuntime?.()) ?? false;
+
+      if (!preparedRuntimeAvailable) {
+        await ensureUvIsAvailable(openWebUIRuntime);
+      }
+    }
+
     const startResult = await openWebUIRuntime.start({
       dataDir,
       executablePath: localInstall.executablePath,
@@ -454,6 +469,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     if (!startResult.started) {
       const uvAvailable = await openWebUIRuntime.isUvAvailable();
+      const managedRuntimeAvailable = openWebUIRuntime.hasPreparedRuntime?.() ?? false;
 
       return {
         health: createComponentHealth(
@@ -471,10 +487,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         installPath: localInstall.installPath,
         installed: localInstall.installed,
         port,
+        managedRuntimeAvailable,
         uvAvailable,
         running: false,
         startedByModelDock: openWebUIRuntime.isStartedByModelDock(),
-        state: uvAvailable ? "not_running" : "tool_missing",
+        state: managedRuntimeAvailable || uvAvailable ? "not_running" : "tool_missing",
         log: openWebUIRuntime.getLog(),
         message: startResult.message
       };
@@ -1007,6 +1024,8 @@ async function getOpenWebUIRuntimeStatus(input: GetOpenWebUIRuntimeStatusInput):
   const localInstall = resolveOpenWebUILocalInstall(input.installPath);
   const running = health.status === "available";
   const startedByModelDock = input.runtime.isStartedByModelDock();
+  const managedRuntimeAvailable = input.runtime.hasPreparedRuntime?.() ?? false;
+  const installerAvailable = managedRuntimeAvailable || uvAvailable;
 
   return {
     health,
@@ -1015,11 +1034,12 @@ async function getOpenWebUIRuntimeStatus(input: GetOpenWebUIRuntimeStatusInput):
     executablePath: localInstall.executablePath,
     installPath: localInstall.installPath,
     installed: localInstall.installed,
+    managedRuntimeAvailable,
     port: readPortFromBaseUrl(input.baseUrl),
     uvAvailable,
     running,
     startedByModelDock,
-    state: running ? "running" : startedByModelDock ? "starting" : uvAvailable ? "not_running" : "tool_missing",
+    state: running ? "running" : startedByModelDock ? "starting" : installerAvailable ? "not_running" : "tool_missing",
     log: input.runtime.getLog(),
     message: running
       ? "Open WebUI is reachable."
@@ -1027,7 +1047,7 @@ async function getOpenWebUIRuntimeStatus(input: GetOpenWebUIRuntimeStatusInput):
         ? "Open WebUI is starting."
         : localInstall.installed
         ? "Open WebUI is installed but not running yet."
-        : uvAvailable
+        : installerAvailable
         ? "Open WebUI is not running yet."
         : "The installer runtime is not available yet."
   };
@@ -1221,6 +1241,7 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
   const dataDir = resolveOpenWebUIDataDir();
   const log: string[] = [];
   let processHandle: ChildProcessWithoutNullStreams | undefined;
+  let preparedRuntime: PreparedOpenWebUIRuntime | undefined;
 
   function appendLog(line: string) {
     const normalizedLine = line.trim();
@@ -1236,18 +1257,48 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
   return {
     getDataDir: () => dataDir,
     getLog: () => [...log],
+    hasPreparedRuntime: () => Boolean(preparedRuntime),
     isStartedByModelDock: () => Boolean(processHandle && processHandle.exitCode === null),
     async isUvAvailable() {
       const result = await runFirstAvailableCommand(resolveUvCommandCandidates(), ["--version"], 2500);
 
       return result.ok;
     },
+    async prepareManagedRuntime(onProgress) {
+      if (preparedRuntime) {
+        onProgress?.({ message: "The prepared chat runtime is ready.", percent: 100 });
+        return true;
+      }
+
+      try {
+        preparedRuntime = await prepareOpenWebUIRuntimeBundle({ onProgress });
+
+        if (!preparedRuntime) {
+          appendLog("No prepared Open WebUI runtime is available for this platform. Using the installer fallback.");
+          return false;
+        }
+
+        appendLog(`Prepared Open WebUI runtime ${preparedRuntime.version} is ready for ${preparedRuntime.target}.`);
+        return true;
+      } catch (error) {
+        appendLog(
+          `Prepared Open WebUI runtime is unavailable; using the installer fallback. ${error instanceof Error ? error.message : String(error)}`
+        );
+        preparedRuntime = undefined;
+        return false;
+      }
+    },
     async start(input) {
       if (processHandle && processHandle.exitCode === null) {
         return { started: true, message: "Open WebUI is already starting from ModelDock." };
       }
 
-      const command = input.executablePath ?? (await findAvailableCommand(resolveUvxCommandCandidates()));
+      const usePreparedRuntime = Boolean(!input.executablePath && preparedRuntime && !input.compatibilityMode);
+      const command = input.executablePath
+        ? input.executablePath
+        : usePreparedRuntime
+          ? preparedRuntime?.pythonPath
+          : await findAvailableCommand(resolveUvxCommandCandidates());
 
       if (!command) {
         appendLog("uvx was not found on this machine.");
@@ -1267,23 +1318,35 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
         runtimeProfile.packageSpec,
         ...serveArgs
       ];
+      const commandArgs = input.executablePath
+        ? serveArgs
+        : usePreparedRuntime
+          ? ["-m", "open_webui", ...serveArgs]
+          : managedArgs;
 
       appendLog(
         input.executablePath
           ? `Starting Open WebUI from ${input.installPath ?? "local install"}.`
-          : runtimeProfile.profile === "intel-mac"
-            ? `Starting Open WebUI ${OPEN_WEBUI_INTEL_MAC_VERSION}, the compatible runtime for Intel Macs.`
-            : runtimeProfile.profile === "compatibility"
-              ? `Retrying Open WebUI with the compatible ${OPEN_WEBUI_COMPATIBILITY_VERSION} runtime.`
-              : "Starting Open WebUI from ModelDock."
+          : usePreparedRuntime
+            ? `Starting the verified Open WebUI runtime ${preparedRuntime?.version ?? ""}.`
+            : runtimeProfile.profile === "intel-mac"
+              ? `Starting Open WebUI ${OPEN_WEBUI_INTEL_MAC_VERSION}, the compatible runtime for Intel Macs.`
+              : runtimeProfile.profile === "compatibility"
+                ? `Retrying Open WebUI with the compatible ${OPEN_WEBUI_COMPATIBILITY_VERSION} runtime.`
+                : "Starting Open WebUI from ModelDock."
       );
-      processHandle = spawn(command, input.executablePath ? serveArgs : managedArgs, {
+      processHandle = spawn(command, commandArgs, {
         env: {
           ...process.env,
           DATA_DIR: input.dataDir,
           ENABLE_API_KEYS: "true",
           ENABLE_SIGNUP: "false",
           OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+          ...(usePreparedRuntime && preparedRuntime
+            ? {
+                PYTHONPATH: [preparedRuntime.sitePackagesPath, process.env.PYTHONPATH].filter(Boolean).join(delimiter)
+              }
+            : {}),
           PORT: String(input.port)
         },
         cwd: input.executablePath ? input.installPath : undefined,
@@ -1334,7 +1397,19 @@ async function runManagedServerSetup(input: {
   }
 
   input.update({ ollamaReady: true, phase: "installing_chat", progress: 48, message: "Preparing the administrator chat." });
-  await ensureUvIsAvailable(input.openWebUIRuntime);
+  const preparedRuntimeAvailable =
+    (await input.openWebUIRuntime.prepareManagedRuntime?.((runtimeProgress) => {
+      input.update({
+        phase: "installing_chat",
+        progress: 48 + Math.round(((runtimeProgress.percent ?? 0) / 100) * 14),
+        message: runtimeProgress.message
+      });
+    })) ?? false;
+
+  if (!preparedRuntimeAvailable) {
+    input.update({ phase: "installing_chat", progress: 50, message: "Preparing the compatible chat installer." });
+    await ensureUvIsAvailable(input.openWebUIRuntime);
+  }
 
   const usesIntelMacRuntime = platform() === "darwin" && arch() === "x64";
   input.update({
@@ -1364,15 +1439,11 @@ async function runManagedServerSetup(input: {
       update: input.update,
       url: baseUrl
     });
-  } catch (error) {
-    if (usesIntelMacRuntime) {
-      throw error;
-    }
-
+  } catch {
     input.update({
       phase: "starting_chat",
       progress: 68,
-      message: "The first chat start failed. Retrying with the macOS-compatible runtime."
+      message: "The prepared chat start failed. Retrying with the compatible installer."
     });
     const fallbackResult = await input.openWebUIRuntime.start({
       compatibilityMode: true,

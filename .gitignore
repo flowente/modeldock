@@ -9,6 +9,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+.runtime-build/
 *.log
 .webui_secret_key
 **/.webui_secret_key

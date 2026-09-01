@@ -15,6 +15,8 @@ Use this before creating the public GitHub repository.
 - `.env.example` lists all supported configuration keys.
 - Server setup guide works from a fresh machine.
 - Guided setup behavior for Ollama, Tailscale and Open WebUI is documented accurately.
+- The `Build Open WebUI runtime packs` workflow completed for all three supported architectures.
+- The runtime release contains `manifest.json`, three archives and matching SHA-256 values.
 - Tailscale device authorization is clearly marked as a real external action.
 
 ## Verification
