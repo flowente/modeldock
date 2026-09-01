@@ -68,10 +68,10 @@ Post-MVP work can add:
 
 ## Requirements
 
-- Node.js 24 or newer.
-- pnpm 11.
 - Windows 10/11 or macOS for the current guided installer path.
 - Internet access during the first setup.
+
+The double-click launchers include a verified portable Node.js runtime when the computer does not already have a compatible version. They do not install Node.js system-wide. Manual installation requires Node.js 24 or newer; pnpm is executed at the version pinned by this repository.
 
 Ollama and Open WebUI do not need to be installed beforehand: the guided setup detects existing installations and prepares what is missing. Tailscale is installed or opened through its official application because its device login can use Google, GitHub or another identity provider.
 
@@ -86,7 +86,7 @@ For the simplest first test:
 
 The launcher can be used inside the cloned repository or downloaded on its own. When downloaded alone it retrieves the current `main` branch into the operating system's local application-data folder. It then:
 
-1. checks Node.js 24 and guides or performs installation where supported;
+1. uses a compatible system Node.js or downloads a verified portable runtime inside ModelDock;
 2. installs the pinned project dependencies;
 3. creates the local `.env` file if missing;
 4. starts the ModelDock API and interface;
