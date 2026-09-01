@@ -7,6 +7,7 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "dev": "pnpm --parallel --filter @modeldock/api --filter @modeldock/web dev",
+    "start": "pnpm --parallel --filter @modeldock/api --filter @modeldock/web start",
     "lint": "pnpm -r --if-present typecheck",
     "preview": "pnpm --filter @modeldock/web preview",
     "test": "vitest run --config vitest.config.mjs --configLoader runner",

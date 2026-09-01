@@ -87,10 +87,10 @@ For the simplest first test:
 The launcher can be used inside the cloned repository or downloaded on its own. When downloaded alone it retrieves the current `main` branch into the operating system's local application-data folder. It then:
 
 1. uses a compatible system Node.js or downloads a verified portable runtime inside ModelDock;
-2. installs the pinned project dependencies;
+2. updates ModelDock when the launcher was downloaded on its own and installs the pinned project dependencies;
 3. creates the local `.env` file if missing;
-4. starts the ModelDock API and interface;
-5. opens `http://127.0.0.1:5173/#welcome` automatically.
+4. creates a stable production build and starts both the ModelDock API and interface;
+5. waits until both services respond, then opens `http://127.0.0.1:4173/#welcome` automatically.
 
 Keep the launcher window open while using ModelDock. Closing it stops the local application. These launchers are the MVP distribution path; a later signed desktop package will remove the visible terminal and remaining operating-system warnings.
 

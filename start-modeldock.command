@@ -10,7 +10,7 @@ MODELDOCK_APP="$SCRIPT_DIR"
 if [[ "${1:-}" == "--help" ]]; then
   echo "Avvia ModelDock dalla repository o lo scarica in:"
   echo "$MODELDOCK_TARGET"
-  echo "Prepara un runtime locale, installa le dipendenze, crea .env, avvia i servizi e apre la welcome page."
+  echo "Prepara un runtime locale, aggiorna l'app, crea la build stabile, avvia i servizi e apre la welcome page."
   exit 0
 fi
 
@@ -27,22 +27,20 @@ echo
 if [[ ! -f "$MODELDOCK_APP/package.json" ]]; then
   MODELDOCK_APP="$MODELDOCK_TARGET"
 
-  if [[ ! -f "$MODELDOCK_APP/package.json" ]]; then
-    echo "[1/4] Download di ModelDock..."
-    download_dir="$(mktemp -d -t modeldock)"
-    archive="$download_dir/modeldock.zip"
+  echo "[1/4] Download di ModelDock..."
+  download_dir="$(mktemp -d -t modeldock)"
+  archive="$download_dir/modeldock.zip"
 
-    if ! curl -fL "https://github.com/flowente/modeldock/archive/refs/heads/main.zip" -o "$archive"; then
-      echo "Il download di ModelDock non è riuscito."
-      rm -rf "$download_dir"
-      exit 1
-    fi
-
-    mkdir -p "$MODELDOCK_APP"
-    ditto -x -k "$archive" "$download_dir"
-    cp -R "$download_dir/modeldock-main/." "$MODELDOCK_APP/"
+  if ! curl -fL "https://github.com/flowente/modeldock/archive/refs/heads/main.zip" -o "$archive"; then
+    echo "Il download di ModelDock non è riuscito."
     rm -rf "$download_dir"
+    exit 1
   fi
+
+  mkdir -p "$MODELDOCK_APP"
+  ditto -x -k "$archive" "$download_dir"
+  cp -R "$download_dir/modeldock-main/." "$MODELDOCK_APP/"
+  rm -rf "$download_dir"
 fi
 
 MODELDOCK_NPX=""
@@ -94,7 +92,16 @@ fi
 cd "$MODELDOCK_APP"
 
 echo "[3/4] Installazione delle dipendenze di ModelDock..."
-"$MODELDOCK_NPX" --yes "pnpm@$MODELDOCK_PNPM_VERSION" install --frozen-lockfile
+if ! "$MODELDOCK_NPX" --yes "pnpm@$MODELDOCK_PNPM_VERSION" install --frozen-lockfile; then
+  echo "L'installazione delle dipendenze non è riuscita."
+  exit 1
+fi
+
+echo "Creazione della versione stabile..."
+if ! "$MODELDOCK_NPX" --yes "pnpm@$MODELDOCK_PNPM_VERSION" build; then
+  echo "La compilazione di ModelDock non è riuscita."
+  exit 1
+fi
 
 if [[ ! -f ".env" ]]; then
   cp ".env.example" ".env"
@@ -112,12 +119,12 @@ echo
 
 (
   for _ in $(seq 1 120); do
-    if curl -fsS "http://127.0.0.1:5173/" >/dev/null 2>&1; then
-      open "http://127.0.0.1:5173/#welcome"
+    if curl -fsS "http://127.0.0.1:4173/" >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:4317/api/health" >/dev/null 2>&1; then
+      open "http://127.0.0.1:4173/#welcome"
       exit 0
     fi
     sleep 1
   done
 ) &
 
-exec "$MODELDOCK_NPX" --yes "pnpm@$MODELDOCK_PNPM_VERSION" dev
+exec "$MODELDOCK_NPX" --yes "pnpm@$MODELDOCK_PNPM_VERSION" start
