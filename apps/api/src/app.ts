@@ -86,6 +86,8 @@ export function resolveManagedOpenWebUIRuntimeProfile(
   packageSpec: string;
   profile: "current" | "compatibility" | "intel-mac";
 } {
+  const platformPackages = platformId === "win32" ? ["pywin32"] : [];
+
   if (platformId === "darwin" && architecture === "x64") {
     return {
       extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4", `cryptography==${INTEL_MAC_CRYPTOGRAPHY_VERSION}`],
@@ -96,14 +98,14 @@ export function resolveManagedOpenWebUIRuntimeProfile(
 
   if (compatibilityMode) {
     return {
-      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4"],
+      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4", ...platformPackages],
       packageSpec: `open-webui@${OPEN_WEBUI_COMPATIBILITY_VERSION}`,
       profile: "compatibility"
     };
   }
 
   return {
-    extraPackages: [],
+    extraPackages: platformPackages,
     packageSpec: "open-webui@latest",
     profile: "current"
   };

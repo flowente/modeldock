@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 
 const target = process.argv[2];
-const runtimeVersion = process.argv[3] ?? "4";
+const runtimeVersion = process.argv[3] ?? "5";
 const supportedTargets = new Set(["windows-x64", "macos-arm64", "macos-x64"]);
 
 if (!target || !supportedTargets.has(target)) {
@@ -21,6 +21,10 @@ const sitePackagesDir = join(bundleDir, "site-packages");
 const isWindows = target === "windows-x64";
 const openWebUIVersion = target === "macos-x64" ? "0.7.2" : "0.11.1";
 const extraPackages = ["greenlet", "itsdangerous", "beautifulsoup4"];
+
+if (target === "windows-x64") {
+  extraPackages.push("pywin32");
+}
 
 if (target === "macos-x64") {
   extraPackages.push("cryptography==48.0.1");

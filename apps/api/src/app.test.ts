@@ -37,6 +37,10 @@ describe("Open WebUI runtime diagnostics", () => {
       profile: "current"
     });
   });
+
+  it("includes the native Windows runtime dependency", () => {
+    expect(resolveManagedOpenWebUIRuntimeProfile("win32", "x64").extraPackages).toEqual(["pywin32"]);
+  });
 });
 
 describe("ModelDock API", () => {
