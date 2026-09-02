@@ -161,7 +161,7 @@ export function WelcomeExperience({
       setIsPreparingServer(status.state === "running");
 
       if (status.state === "succeeded" && status.chatUrl) {
-        updateSettings({ chatUrl: status.chatUrl });
+        updateSettings({ chatUrl: resolveVisibleChatUrl(status.chatUrl, settings.chatUrl) });
         setAdminPassword("");
         setConfirmPassword("");
       }
@@ -534,5 +534,24 @@ function withPort(value: string, port: number): string {
     return url.toString().replace(/\/$/, "");
   } catch {
     return value.replace(/:\d+\/?$/, `:${port}`);
+  }
+}
+
+export function resolveVisibleChatUrl(runtimeUrl: string, detectedPrivateUrl: string): string {
+  const privateUrl = detectedPrivateUrl.trim();
+
+  if (isLoopbackUrl(runtimeUrl) && privateUrl && !isLoopbackUrl(privateUrl)) {
+    return privateUrl;
+  }
+
+  return runtimeUrl;
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
   }
 }
