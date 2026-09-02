@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, type AppSettings } from "../types.js";
 
 const SETTINGS_STORAGE_KEY = "modeldock:settings";
@@ -12,12 +12,12 @@ export function useAppSettings() {
     document.documentElement.dataset.theme = settings.theme;
   }, [settings]);
 
-  function updateSettings(next: Partial<AppSettings>) {
+  const updateSettings = useCallback((next: Partial<AppSettings>) => {
     setSettings((current) => ({
       ...current,
       ...next
     }));
-  }
+  }, []);
 
   return {
     defaultSettings: DEFAULT_SETTINGS,

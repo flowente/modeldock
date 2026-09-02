@@ -527,7 +527,7 @@ function formatManagedSetupFailure(message: string, language: LanguagePreference
   return language === "it" ? `ModelDock non ha completato la preparazione. ${message}` : message;
 }
 
-function withPort(value: string, port: number): string {
+export function withPort(value: string, port: number): string {
   try {
     const url = new URL(value);
     url.port = String(port);

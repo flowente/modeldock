@@ -13,14 +13,15 @@ import {
   type ModelPullJob,
   type SystemResources,
   type SystemStatus,
-  type TailnetDevice
+  type TailnetDevice,
+  type TailscaleSetupStatus
 } from "./api.js";
 import { NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
 import { ModelAccessRow, PullProgress } from "./components/models.js";
 import { OnboardingCard } from "./components/onboarding.js";
 import { DetailItem, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
 import { UsageAccessRow } from "./components/usage.js";
-import { WelcomeExperience } from "./components/welcome.js";
+import { resolveVisibleChatUrl, WelcomeExperience, withPort } from "./components/welcome.js";
 import { useAppSettings } from "./hooks/use-app-settings.js";
 import { useClipboard } from "./hooks/use-clipboard.js";
 import { useHashRoute } from "./hooks/use-hash-route.js";
@@ -263,6 +264,33 @@ export function App() {
       void invalidateModelQueries();
     }
   }, [pullJob?.id, pullJob?.model, pullJob?.status]);
+
+  useEffect(() => {
+    if (!settings.setupComplete || !settings.chatUrl.trim()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    void getJson<TailscaleSetupStatus>("/api/setup/tailscale")
+      .then((status) => {
+        if (cancelled || !status.loggedIn || !status.suggestedServerUrl) {
+          return;
+        }
+
+        const detectedPrivateChatUrl = withPort(status.suggestedServerUrl, 8080);
+        const resolvedChatUrl = resolveVisibleChatUrl(settings.chatUrl, detectedPrivateChatUrl);
+
+        if (resolvedChatUrl !== settings.chatUrl) {
+          updateSettings({ chatUrl: resolvedChatUrl, serverAccessUrl: status.suggestedServerUrl });
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.chatUrl, settings.setupComplete, updateSettings]);
 
   function confirmModelDelete(name: string) {
     if (!window.confirm(tr(`Delete ${name} from ModelDock?`, `Eliminare ${name} da ModelDock?`))) {
