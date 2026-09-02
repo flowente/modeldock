@@ -112,6 +112,14 @@ export function resolveManagedOpenWebUIRuntimeProfile(
   };
 }
 
+export function resolveManagedOpenWebUIBootstrapEnvironment(): Record<string, string> {
+  return {
+    ENABLE_API_KEYS: "true",
+    ENABLE_INITIAL_ADMIN_SIGNUP: "true",
+    ENABLE_SIGNUP: "true"
+  };
+}
+
 interface RuntimeDependencies {
   clock: Clock;
   ids: IdGenerator;
@@ -1342,8 +1350,7 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
         env: {
           ...process.env,
           DATA_DIR: input.dataDir,
-          ENABLE_API_KEYS: "true",
-          ENABLE_SIGNUP: "false",
+          ...resolveManagedOpenWebUIBootstrapEnvironment(),
           OLLAMA_BASE_URL: "http://127.0.0.1:11434",
           ...(usePreparedRuntime && preparedRuntime
             ? {
@@ -1584,20 +1591,22 @@ async function ensureUvIsAvailable(runtime: OpenWebUIRuntimeController): Promise
   }
 }
 
-async function provisionOpenWebUIAdmin(input: {
+export async function provisionOpenWebUIAdmin(input: {
   admin: { email: string; name: string; password: string };
   baseUrl: string;
   fetchImpl: typeof fetch;
 }): Promise<string> {
-  let authenticationResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/signin`, {
+  const signinResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/signin`, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ email: input.admin.email, password: input.admin.password }),
     signal: AbortSignal.timeout(10_000)
   });
 
-  if (!authenticationResponse.ok) {
-    authenticationResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/signup`, {
+  let authenticationResponse = signinResponse;
+
+  if (!signinResponse.ok) {
+    const signupResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/signup`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
@@ -1608,10 +1617,22 @@ async function provisionOpenWebUIAdmin(input: {
       }),
       signal: AbortSignal.timeout(10_000)
     });
-  }
 
-  if (!authenticationResponse.ok) {
-    throw new Error("The chat is ready, but the administrator account could not be created or verified. If this is an existing ModelDock installation, use its current administrator credentials.");
+    if (!signupResponse.ok) {
+      const detail = await readOpenWebUIErrorDetail(signupResponse);
+      const existingAdministrator =
+        signupResponse.status === 401 ||
+        signupResponse.status === 403 ||
+        /already|email.*taken|existing|prohibited|permission/i.test(detail);
+
+      if (existingAdministrator) {
+        throw new Error("The local chat already has an administrator. Enter the email and password of that existing administrator and try again.");
+      }
+
+      throw new Error(`OpenWebUI rejected the administrator account: ${detail || `HTTP ${signupResponse.status}`}`);
+    }
+
+    authenticationResponse = signupResponse;
   }
 
   const session = (await authenticationResponse.json()) as { role?: string; token?: string };
@@ -1637,6 +1658,28 @@ async function provisionOpenWebUIAdmin(input: {
 
   const result = (await apiKeyResponse.json()) as { api_key?: string };
   return result.api_key?.trim() || session.token;
+}
+
+async function readOpenWebUIErrorDetail(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { detail?: unknown; message?: unknown };
+    const detail = payload.detail ?? payload.message;
+
+    if (typeof detail === "string") {
+      return detail.trim();
+    }
+
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+        .join(" ")
+        .trim();
+    }
+  } catch {
+    // Non-JSON failures fall back to their HTTP status in the caller.
+  }
+
+  return "";
 }
 
 async function waitForHealth(

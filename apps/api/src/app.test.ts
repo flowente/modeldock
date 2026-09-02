@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import {
   buildApp,
+  provisionOpenWebUIAdmin,
+  resolveManagedOpenWebUIBootstrapEnvironment,
   resolveManagedOpenWebUIRuntimeProfile,
   resolveOpenWebUILocalInstall,
   resolveUvxCommandCandidates,
@@ -12,6 +14,56 @@ import {
 } from "./app.ts";
 
 describe("Open WebUI runtime diagnostics", () => {
+  it("allows only the initial administrator bootstrap while Open WebUI starts", () => {
+    expect(resolveManagedOpenWebUIBootstrapEnvironment()).toEqual({
+      ENABLE_API_KEYS: "true",
+      ENABLE_INITIAL_ADMIN_SIGNUP: "true",
+      ENABLE_SIGNUP: "true"
+    });
+  });
+
+  it("creates the first administrator when sign-in confirms it does not exist yet", async () => {
+    const requestedPaths: string[] = [];
+    const apiKey = await provisionOpenWebUIAdmin({
+      admin: { email: "admin@example.com", name: "Admin", password: "a-secure-password" },
+      baseUrl: "http://127.0.0.1:8080",
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        requestedPaths.push(path);
+
+        if (path.endsWith("/signin")) {
+          return Response.json({ detail: "Invalid credentials" }, { status: 400 });
+        }
+
+        if (path.endsWith("/signup")) {
+          return Response.json({ role: "admin", token: "first-admin-token" });
+        }
+
+        return Response.json({ api_key: "sk-first-admin" });
+      }
+    });
+
+    expect(apiKey).toBe("sk-first-admin");
+    expect(requestedPaths).toEqual([
+      "/api/v1/auths/signin",
+      "/api/v1/auths/signup",
+      "/api/v1/auths/api_key"
+    ]);
+  });
+
+  it("distinguishes an existing administrator from a failed first signup", async () => {
+    await expect(
+      provisionOpenWebUIAdmin({
+        admin: { email: "wrong@example.com", name: "Admin", password: "a-secure-password" },
+        baseUrl: "http://127.0.0.1:8080",
+        fetchImpl: async (url) =>
+          String(url).endsWith("/signin")
+            ? Response.json({ detail: "Invalid credentials" }, { status: 400 })
+            : Response.json({ detail: "Access prohibited" }, { status: 403 })
+      })
+    ).rejects.toThrow("already has an administrator");
+  });
+
   it("keeps the useful error instead of only the exit code", () => {
     expect(
       summarizeOpenWebUIRuntimeFailure([

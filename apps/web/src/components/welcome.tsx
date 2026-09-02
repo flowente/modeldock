@@ -130,6 +130,7 @@ export function WelcomeExperience({
   const [tailscaleSetup, setTailscaleSetup] = useState<TailscaleSetupStatus | null>(null);
   const [tailscaleSetupMessage, setTailscaleSetupMessage] = useState<string | null>(null);
   const [isCheckingTailscale, setIsCheckingTailscale] = useState(false);
+  const showAdministratorFields = shouldShowAdministratorFields(serverSetup);
 
   useEffect(() => {
     if (activeStep === 1) {
@@ -350,33 +351,33 @@ export function WelcomeExperience({
 
             {activeStep === 2 ? (
               <div className="welcome-server-setup">
-                <div className="welcome-account-context" role="note">
-                  <strong>{settings.language === "it" ? "Account amministratore della chat" : "Chat administrator account"}</strong>
-                  <span>{settings.language === "it" ? "Questi dati creano un nuovo account locale per OpenWebUI. Non sono le credenziali di Tailscale." : "These details create a new local OpenWebUI account. They are not your Tailscale credentials."}</span>
-                </div>
-                <div className="welcome-admin-fields">
-                  <label className="welcome-field">
-                    <span>{settings.language === "it" ? "Nome amministratore" : "Administrator name"}</span>
-                    <input autoComplete="name" value={adminName} onChange={(event) => setAdminName(event.target.value)} />
-                  </label>
-                  <label className="welcome-field">
-                    <span>Email</span>
-                    <input autoComplete="email" inputMode="email" type="email" value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} />
-                  </label>
-                  <label className="welcome-field">
-                    <span>Password</span>
-                    <input autoComplete="new-password" type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} />
-                  </label>
-                  <label className="welcome-field">
-                    <span>{settings.language === "it" ? "Conferma password" : "Confirm password"}</span>
-                    <input autoComplete="new-password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
-                  </label>
-                </div>
-                <small className="welcome-security-note">
-                  {settings.language === "it"
-                    ? "La password serve solo per creare l'amministratore e non viene salvata da ModelDock. Al termine resterà memorizzato soltanto l'accesso API locale."
-                    : "The password is used only to create the administrator and is not stored by ModelDock. Only local API access remains saved after setup."}
-                </small>
+                {showAdministratorFields ? (
+                  <>
+                    <div className="welcome-admin-fields">
+                      <label className="welcome-field">
+                        <span>{settings.language === "it" ? "Nome amministratore" : "Administrator name"}</span>
+                        <input autoComplete="name" value={adminName} onChange={(event) => setAdminName(event.target.value)} />
+                      </label>
+                      <label className="welcome-field">
+                        <span>Email</span>
+                        <input autoComplete="email" inputMode="email" type="email" value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} />
+                      </label>
+                      <label className="welcome-field">
+                        <span>Password</span>
+                        <input autoComplete="new-password" type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} />
+                      </label>
+                      <label className="welcome-field">
+                        <span>{settings.language === "it" ? "Conferma password" : "Confirm password"}</span>
+                        <input autoComplete="new-password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+                      </label>
+                    </div>
+                    <small className="welcome-security-note">
+                      {settings.language === "it"
+                        ? "La password serve solo per creare l'amministratore e non viene salvata da ModelDock. Al termine resterà memorizzato soltanto l'accesso API locale."
+                        : "The password is used only to create the administrator and is not stored by ModelDock. Only local API access remains saved after setup."}
+                    </small>
+                  </>
+                ) : null}
                 {formMessage ? <small className="welcome-check-result warning">{formMessage}</small> : null}
                 {serverSetup ? <ManagedSetupProgress language={settings.language} status={serverSetup} /> : null}
               </div>
@@ -446,13 +447,17 @@ function ManagedSetupProgress({ language, status }: { language: LanguagePreferen
   );
 }
 
-function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: LanguagePreference): string {
+export function shouldShowAdministratorFields(status: ManagedServerSetupStatus | null): boolean {
+  return !status || status.state === "idle" || status.state === "failed";
+}
+
+export function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: LanguagePreference): string {
   if (status.state === "succeeded") {
     return language === "it" ? "Motore dei modelli, chat e accesso amministratore sono pronti." : "Model engine, chat and administrator access are ready.";
   }
 
   if (status.state === "failed") {
-    return language === "it" ? `ModelDock non ha completato la preparazione. ${status.message}` : status.message;
+    return formatManagedSetupFailure(status.message, language);
   }
 
   if (status.phase === "starting_chat") {
@@ -474,16 +479,15 @@ function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: L
   }
 
   if (status.phase === "installing_chat" && status.message.startsWith("Downloading the prepared chat runtime")) {
-    const downloadPercent = status.message.match(/\((\d+)%\)/)?.[1];
-    const suffix = downloadPercent ? ` ${downloadPercent}%` : "";
-
     return language === "it"
-      ? `Download della chat già preparata…${suffix}`
-      : `Downloading the prepared chat…${suffix}`;
+      ? "Download della chat locale: contiene OpenWebUI e le dipendenze necessarie per avviarla senza installazioni manuali."
+      : "Downloading the local chat package: it contains OpenWebUI and the dependencies required to start it without manual installation.";
   }
 
   if (status.phase === "installing_chat" && status.message.startsWith("Installing the prepared chat runtime")) {
-    return language === "it" ? "Installazione della chat già verificata…" : "Installing the verified chat runtime…";
+    return language === "it"
+      ? "Preparazione della chat locale scaricata: ModelDock ne verifica i file e la rende pronta all'avvio."
+      : "Preparing the downloaded local chat: ModelDock verifies its files and makes it ready to start.";
   }
 
   const messages: Record<ManagedServerSetupStatus["phase"], [string, string]> = {
@@ -499,6 +503,28 @@ function formatManagedSetupMessage(status: ManagedServerSetupStatus, language: L
   };
 
   return messages[status.phase][language === "it" ? 0 : 1];
+}
+
+function formatManagedSetupFailure(message: string, language: LanguagePreference): string {
+  const existingAdministrator =
+    message.includes("already has an administrator") ||
+    message.includes("administrator account could not be created or verified");
+
+  if (existingAdministrator) {
+    return language === "it"
+      ? "La chat è pronta, ma contiene già un amministratore. Inserisci l'email e la password di quell'account e riprova."
+      : "The chat is ready, but it already contains an administrator. Enter that account's email and password and try again.";
+  }
+
+  if (message.startsWith("OpenWebUI rejected the administrator account:")) {
+    const detail = message.slice("OpenWebUI rejected the administrator account:".length).trim();
+
+    return language === "it"
+      ? `OpenWebUI non ha accettato l'account amministratore. ${detail}`
+      : message;
+  }
+
+  return language === "it" ? `ModelDock non ha completato la preparazione. ${message}` : message;
 }
 
 function withPort(value: string, port: number): string {

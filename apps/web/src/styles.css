@@ -368,23 +368,6 @@ select {
   line-height: 1.5;
 }
 
-.welcome-account-context {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-  color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
-.welcome-account-context strong {
-  color: var(--text);
-  font-size: 0.86rem;
-}
-
 .managed-setup-progress {
   display: grid;
   gap: 9px;
