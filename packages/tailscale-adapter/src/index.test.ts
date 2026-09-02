@@ -90,6 +90,33 @@ describe("Tailscale API gateway", () => {
     });
     expect(methods).toEqual(["POST", "GET"]);
   });
+
+  it("creates a one-time member invite for the tailnet", async () => {
+    const gateway = new TailscaleApiGateway({
+      apiToken: "tskey-api-test",
+      clock,
+      fetchImpl: async (url, init) => {
+        expect(String(url)).toBe("https://api.tailscale.com/api/v2/tailnet/-/user-invites");
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({ role: "member", email: "guest@example.com" });
+
+        return jsonResponse({
+          id: "invite-1",
+          inviteUrl: "https://login.tailscale.com/uinv/modeldock",
+          role: "member",
+          email: "guest@example.com"
+        });
+      }
+    });
+
+    await expect(gateway.createUserInvite({ email: " Guest@Example.com " })).resolves.toEqual({
+      id: "invite-1",
+      inviteUrl: "https://login.tailscale.com/uinv/modeldock",
+      role: "member",
+      email: "guest@example.com",
+      expiresAt: undefined
+    });
+  });
 });
 
 function jsonResponse(body: unknown): Response {

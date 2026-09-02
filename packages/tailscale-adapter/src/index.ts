@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { Clock, ComponentHealth, TailnetDevice, TailscaleGateway, UpdateTailnetDeviceInput } from "@modeldock/core";
+import type {
+  Clock,
+  ComponentHealth,
+  CreateTailnetUserInviteInput,
+  TailnetDevice,
+  TailnetUserInvite,
+  TailscaleGateway,
+  UpdateTailnetDeviceInput
+} from "@modeldock/core";
 import { createComponentHealth, ModelDockError } from "@modeldock/core";
 
 const execFileAsync = promisify(execFile);
@@ -63,6 +71,14 @@ interface TailscaleApiDevice {
 
 interface TailscaleApiDevicesResponse {
   devices?: TailscaleApiDevice[];
+}
+
+interface TailscaleApiUserInvite {
+  id?: string;
+  inviteUrl?: string;
+  role?: string;
+  email?: string;
+  expiresAt?: string;
 }
 
 export class TailscaleCliGateway implements TailscaleGateway {
@@ -131,6 +147,15 @@ export class TailscaleCliGateway implements TailscaleGateway {
     const peers = Object.entries(status.Peer ?? {}).map(([fallbackId, peer]) => this.mapDevice(fallbackId, peer));
 
     return [...self, ...peers];
+  }
+
+  public async createUserInvite(_input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite> {
+    throw new ModelDockError({
+      code: "TAILSCALE_WRITE_NOT_CONFIGURED",
+      module: "tailscale-adapter",
+      message: "Creating a real Tailscale invite requires the Tailscale API adapter.",
+      suggestion: "Configure a Tailscale API key before inviting a device from ModelDock."
+    });
   }
 
   public async updateDeviceAuthorization(_input: UpdateTailnetDeviceInput): Promise<TailnetDevice> {
@@ -304,6 +329,36 @@ export class TailscaleApiGateway implements TailscaleGateway {
     const payload = await this.request<TailscaleApiDevicesResponse>(`/tailnet/${encodeURIComponent(this.tailnet)}/devices?fields=all`);
 
     return (payload.devices ?? []).map((device, index) => this.mapDevice(device, index));
+  }
+
+  public async createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite> {
+    const email = input.email?.trim().toLowerCase();
+    const payload = await this.request<TailscaleApiUserInvite>(`/tailnet/${encodeURIComponent(this.tailnet)}/user-invites`, {
+      body: JSON.stringify({
+        role: "member",
+        ...(email ? { email } : {})
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    if (!payload.id || !payload.inviteUrl) {
+      throw new ModelDockError({
+        code: "TAILSCALE_INVITE_INVALID_RESPONSE",
+        module: "tailscale-adapter",
+        message: "Tailscale created an invite but did not return its link"
+      });
+    }
+
+    return {
+      id: payload.id,
+      inviteUrl: payload.inviteUrl,
+      role: "member",
+      email: payload.email ?? email,
+      expiresAt: payload.expiresAt
+    };
   }
 
   public async updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice> {

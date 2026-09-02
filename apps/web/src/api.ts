@@ -1,6 +1,7 @@
 export type {
   AccessGroup,
   AccessUser,
+  AiServerPowerStatus,
   AuditEvent,
   ComponentHealth,
   DiagnosticCheck,
@@ -18,6 +19,8 @@ export type {
   SystemResources,
   SystemStatus,
   TailnetDevice,
+  TailnetUserInvite,
+  TailscaleApiConnectionStatus,
   TailscaleSetupStatus,
   UpdateModelAccessPolicyInput
 } from "../../../packages/core/src/index.js";

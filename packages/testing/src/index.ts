@@ -15,7 +15,9 @@ import type {
   OllamaGateway,
   PullModelInput,
   RunningModel,
+  CreateTailnetUserInviteInput,
   TailnetDevice,
+  TailnetUserInvite,
   TailscaleGateway,
   UpdateTailnetDeviceInput
 } from "@modeldock/core";
@@ -276,6 +278,18 @@ export class FakeTailscaleGateway implements TailscaleGateway {
     }
 
     return [...this.devices.values()].map((device) => cloneDevice(device));
+  }
+
+  public async createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite> {
+    const email = input.email?.trim().toLowerCase();
+
+    return {
+      id: "invite-1",
+      inviteUrl: "https://login.tailscale.com/uinv/modeldock-test",
+      role: "member",
+      email,
+      expiresAt: "2026-10-02T00:00:00.000Z"
+    };
   }
 
   public async updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice> {

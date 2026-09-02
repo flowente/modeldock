@@ -36,6 +36,11 @@ describe("diagnostics", () => {
           checkedAt: "2026-08-29T00:00:00.000Z"
         }),
         listDevices: async () => [],
+        createUserInvite: async () => ({
+          id: "invite_1",
+          inviteUrl: "https://login.tailscale.com/uinv/test",
+          role: "member"
+        }),
         updateDeviceAuthorization: async () => ({
           id: "device_1",
           hostname: "test-device",

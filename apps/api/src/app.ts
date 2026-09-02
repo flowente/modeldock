@@ -10,6 +10,7 @@ import {
   ModelDockError,
   type AuditEvent,
   type AuditStore,
+  type AiServerPowerStatus,
   type Clock,
   type ComponentHealth,
   type DiagnosticCheckResult,
@@ -25,7 +26,9 @@ import {
   type OpenWebUIRuntimeStatus,
   type SystemResources,
   type TailnetDevice,
+  type TailnetUserInvite,
   type TailscaleGateway,
+  type TailscaleApiConnectionStatus,
   type TailscaleSetupStatus
 } from "@modeldock/core";
 import { createDiagnosticRegistry } from "@modeldock/diagnostics";
@@ -54,6 +57,7 @@ export interface BuildAppOptions {
   localEnvPath?: string;
   tailscaleApiBaseUrl?: string;
   tailscaleApiToken?: string;
+  tailscaleFetch?: typeof fetch;
   tailscaleMode?: TailscaleRuntimeMode;
   tailscaleTailnet?: string;
 }
@@ -65,6 +69,7 @@ interface OpenWebUIRuntimeController {
   isStartedByModelDock(): boolean;
   isUvAvailable(): Promise<boolean>;
   prepareManagedRuntime?(onProgress?: (progress: RuntimePreparationProgress) => void): Promise<boolean>;
+  stop?(): Promise<{ stopped: boolean; message: string }>;
   start(input: {
     compatibilityMode?: boolean;
     dataDir: string;
@@ -137,6 +142,52 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const openWebUIRuntime = options.openWebUIRuntime ?? createOpenWebUIRuntimeController();
   const app = Fastify({ logger: options.logger ?? false });
   let managedServerSetup = createInitialManagedServerSetupStatus(dependencies.clock);
+  let powerTransition: "starting" | "stopping" | null = null;
+
+  function getTailscaleManagementGateway(): TailscaleGateway {
+    if (!options.tailscaleApiToken?.trim()) {
+      return dependencies.tailscale;
+    }
+
+    return new TailscaleApiGateway({
+      apiToken: options.tailscaleApiToken,
+      baseUrl: options.tailscaleApiBaseUrl,
+      clock: dependencies.clock,
+      fetchImpl: options.tailscaleFetch,
+      tailnet: options.tailscaleTailnet
+    });
+  }
+
+  async function readAiServerPowerStatus(): Promise<AiServerPowerStatus> {
+    const baseUrl = resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl);
+    const [ollama, chat, runningModels] = await Promise.all([
+      dependencies.ollama.getHealth(),
+      getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch),
+      dependencies.ollama.listRunningModels().catch(() => [])
+    ]);
+    const ollamaReady = ollama.status === "available";
+    const chatReady = chat.status === "available";
+    const state = powerTransition ?? (ollamaReady && chatReady ? "on" : !chatReady ? "off" : "degraded");
+
+    return {
+      state,
+      ollamaReady,
+      chatReady,
+      managedChat: openWebUIRuntime.isStartedByModelDock(),
+      loadedModels: runningModels.length,
+      message:
+        state === "on"
+          ? "The AI services are ready."
+          : state === "off"
+            ? "The AI services are off. ModelDock and Tailscale remain reachable."
+            : state === "starting"
+              ? "The AI services are starting."
+              : state === "stopping"
+                ? "The AI services are stopping."
+                : "One or more AI services need attention.",
+      updatedAt: dependencies.clock.now().toISOString()
+    };
+  }
 
   app.addHook("onRequest", async (request, reply) => {
     reply.header("x-correlation-id", request.id);
@@ -163,6 +214,113 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       openWebUI,
       checkedAt: dependencies.clock.now().toISOString()
     });
+  });
+
+  app.get("/api/server/power", async (): Promise<AiServerPowerStatus> => readAiServerPowerStatus());
+
+  app.post("/api/server/power/start", async (): Promise<AiServerPowerStatus> => {
+    powerTransition = "starting";
+
+    try {
+      const ollamaReady = await ensureOllamaIsReady(dependencies.ollama.getHealth.bind(dependencies.ollama), () => undefined);
+
+      if (!ollamaReady) {
+        throw new ModelDockError({
+          code: "AI_SERVER_OLLAMA_START_FAILED",
+          module: "server-power",
+          message: "Ollama could not be started"
+        });
+      }
+
+      const baseUrl = resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl);
+      const chatHealth = await getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch);
+
+      if (chatHealth.status !== "available") {
+        const preparedRuntimeAvailable = (await openWebUIRuntime.prepareManagedRuntime?.()) ?? false;
+
+        if (!preparedRuntimeAvailable) {
+          await ensureUvIsAvailable(openWebUIRuntime);
+        }
+
+        const startResult = await openWebUIRuntime.start({
+          dataDir: openWebUIRuntime.getDataDir(),
+          port: new URL(baseUrl).port ? Number(new URL(baseUrl).port) : 8080
+        });
+
+        if (!startResult.started) {
+          throw new ModelDockError({
+            code: "AI_SERVER_CHAT_START_FAILED",
+            module: "server-power",
+            message: startResult.message
+          });
+        }
+
+        await waitForManagedChat({
+          clock: dependencies.clock,
+          fetchImpl: options.openWebUIFetch ?? fetch,
+          getRuntimeLog: openWebUIRuntime.getLog,
+          isRuntimeAlive: openWebUIRuntime.isStartedByModelDock,
+          update: () => undefined,
+          url: baseUrl
+        });
+      }
+
+      options.openWebUIBaseUrl = baseUrl;
+      await dependencies.auditStore.append({
+        actorId: "system",
+        action: "AI_SERVER_STARTED",
+        module: "server-power",
+        result: "success",
+        correlationId: "server-power-start",
+        resourceType: "server",
+        resourceId: "local"
+      });
+    } finally {
+      powerTransition = null;
+    }
+
+    return readAiServerPowerStatus();
+  });
+
+  app.post("/api/server/power/stop", async (): Promise<AiServerPowerStatus> => {
+    powerTransition = "stopping";
+
+    try {
+      const runningModels = await dependencies.ollama.listRunningModels().catch(() => []);
+      await Promise.all(runningModels.map((model) => dependencies.ollama.unloadModel({ model: model.name })));
+
+      const chatHealth = await getOpenWebUIHealth(
+        resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl),
+        dependencies.clock,
+        options.openWebUIFetch
+      );
+
+      if (chatHealth.status === "available") {
+        const stopResult = await openWebUIRuntime.stop?.();
+
+        if (!stopResult?.stopped) {
+          throw new ModelDockError({
+            code: "AI_SERVER_CHAT_NOT_MANAGED",
+            module: "server-power",
+            message: "The chat is running outside ModelDock and cannot be stopped safely"
+          });
+        }
+      }
+
+      await dependencies.auditStore.append({
+        actorId: "system",
+        action: "AI_SERVER_STOPPED",
+        module: "server-power",
+        result: "success",
+        correlationId: "server-power-stop",
+        resourceType: "server",
+        resourceId: "local"
+      });
+    } finally {
+      powerTransition = null;
+    }
+
+    return readAiServerPowerStatus();
   });
 
   app.get("/api/system/resources", async (): Promise<SystemResources> => {
@@ -374,6 +532,47 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post("/api/setup/tailscale/login", async () => startTailscaleLoginForCurrentPlatform());
+
+  app.get("/api/settings/tailscale-api", async (): Promise<TailscaleApiConnectionStatus> => {
+    const configured = Boolean(options.tailscaleApiToken?.trim()) || (options.tailscaleMode ?? "fake") === "fake";
+
+    if (!configured) {
+      return {
+        configured: false,
+        connected: false,
+        message: "A Tailscale API key is required to create and manage invitations."
+      };
+    }
+
+    const health = await getTailscaleManagementGateway().getLocalStatus();
+    return {
+      configured: true,
+      connected: health.status === "available",
+      message: health.message
+    };
+  });
+
+  app.post<{ Body: { apiToken?: string } }>("/api/settings/tailscale-api", async (request): Promise<TailscaleApiConnectionStatus> => {
+    const apiToken = request.body.apiToken?.trim();
+
+    if (!apiToken || apiToken.length < 12) {
+      throw new ModelDockError({
+        code: "INVALID_INPUT",
+        module: "tailscale-adapter",
+        message: "A valid Tailscale API key is required"
+      });
+    }
+
+    options.tailscaleApiToken = apiToken;
+    await upsertLocalEnvValues({ MODELDOCK_TAILSCALE_API_TOKEN: apiToken }, options.localEnvPath);
+    const health = await getTailscaleManagementGateway().getLocalStatus();
+
+    return {
+      configured: true,
+      connected: health.status === "available",
+      message: health.message
+    };
+  });
 
   app.get<{ Querystring: { baseUrl?: string } }>("/api/setup/open-webui", async (request): Promise<OpenWebUISetupStatus> => {
     const baseUrl = normalizeBaseUrl(request.query.baseUrl) ?? normalizeBaseUrl(options.openWebUIBaseUrl);
@@ -704,7 +903,32 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   );
 
   app.get("/api/network/tailscale/status", async () => dependencies.tailscale.getLocalStatus());
-  app.get("/api/network/tailscale/devices", async () => dependencies.tailscale.listDevices().catch(() => []));
+  app.get("/api/network/tailscale/devices", async () => getTailscaleManagementGateway().listDevices().catch(() => []));
+  app.post<{ Body: { email?: string } }>("/api/network/tailscale/invites", async (request): Promise<TailnetUserInvite> => {
+    const email = request.body.email?.trim().toLowerCase();
+
+    if (email && !email.includes("@")) {
+      throw new ModelDockError({
+        code: "INVALID_INPUT",
+        module: "tailscale-adapter",
+        message: "A valid email address is required when an email is provided"
+      });
+    }
+
+    const invite = await getTailscaleManagementGateway().createUserInvite({ email, role: "member" });
+
+    await dependencies.auditStore.append({
+      actorId: "system",
+      action: "TAILSCALE_USER_INVITE_CREATED",
+      module: "network",
+      result: "success",
+      correlationId: request.id,
+      resourceType: "tailnet-user-invite",
+      resourceId: invite.id
+    });
+
+    return invite;
+  });
   app.put<{ Params: { deviceId: string }; Body: { authorized?: boolean } }>("/api/network/tailscale/devices/:deviceId", async (request) => {
     if (typeof request.body.authorized !== "boolean") {
       throw new ModelDockError({
@@ -714,7 +938,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       });
     }
 
-    const device = await dependencies.tailscale.updateDeviceAuthorization({
+    const device = await getTailscaleManagementGateway().updateDeviceAuthorization({
       deviceId: request.params.deviceId,
       authorized: request.body.authorized
     });
@@ -826,6 +1050,7 @@ function createRuntimeDependencies(options: BuildAppOptions): RuntimeDependencie
       apiToken: options.tailscaleApiToken,
       clock,
       fake: dependencies.tailscale,
+      fetchImpl: options.tailscaleFetch,
       mode: tailscaleMode,
       tailnet: options.tailscaleTailnet
     }),
@@ -838,6 +1063,7 @@ function createTailscaleGateway({
   apiToken,
   clock,
   fake,
+  fetchImpl,
   mode,
   tailnet
 }: {
@@ -845,6 +1071,7 @@ function createTailscaleGateway({
   apiToken?: string;
   clock: Clock;
   fake: TailscaleGateway;
+  fetchImpl?: typeof fetch;
   mode: TailscaleRuntimeMode;
   tailnet?: string;
 }): TailscaleGateway {
@@ -857,6 +1084,7 @@ function createTailscaleGateway({
       apiToken,
       baseUrl: apiBaseUrl,
       clock,
+      fetchImpl,
       tailnet
     });
   }
@@ -1269,7 +1497,7 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
     getDataDir: () => dataDir,
     getLog: () => [...log],
     hasPreparedRuntime: () => Boolean(preparedRuntime),
-    isStartedByModelDock: () => Boolean(processHandle && processHandle.exitCode === null),
+    isStartedByModelDock: () => Boolean(processHandle && processHandle.exitCode === null && processHandle.signalCode === null),
     async isUvAvailable() {
       const result = await runFirstAvailableCommand(resolveUvCommandCandidates(), ["--version"], 2500);
 
@@ -1299,8 +1527,34 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
         return false;
       }
     },
+    async stop() {
+      const activeProcess = processHandle;
+
+      if (!activeProcess || activeProcess.exitCode !== null || activeProcess.signalCode !== null) {
+        return { stopped: false, message: "Open WebUI is not running under ModelDock control." };
+      }
+
+      const exited = new Promise<void>((resolve) => activeProcess.once("exit", () => resolve()));
+
+      if (!activeProcess.kill()) {
+        return { stopped: false, message: "ModelDock could not request Open WebUI to stop." };
+      }
+
+      await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
+
+      if (activeProcess.exitCode === null && activeProcess.signalCode === null) {
+        return { stopped: false, message: "Open WebUI did not stop in time." };
+      }
+
+      if (processHandle === activeProcess) {
+        processHandle = undefined;
+      }
+
+      appendLog("Open WebUI was stopped by ModelDock.");
+      return { stopped: true, message: "Open WebUI stopped." };
+    },
     async start(input) {
-      if (processHandle && processHandle.exitCode === null) {
+      if (processHandle && processHandle.exitCode === null && processHandle.signalCode === null) {
         return { started: true, message: "Open WebUI is already starting from ModelDock." };
       }
 

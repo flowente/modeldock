@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Plus, Power, X } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   deleteJson,
@@ -7,6 +7,7 @@ import {
   postJson,
   putJson,
   type DiagnosticCheck,
+  type AiServerPowerStatus,
   type Model,
   type ModelAccessMatrix,
   type ModelAccessPolicy,
@@ -14,9 +15,11 @@ import {
   type SystemResources,
   type SystemStatus,
   type TailnetDevice,
+  type TailnetUserInvite,
+  type TailscaleApiConnectionStatus,
   type TailscaleSetupStatus
 } from "./api.js";
-import { NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
+import { DeviceTopology, NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
 import { ModelAccessRow, PullProgress } from "./components/models.js";
 import { OnboardingCard } from "./components/onboarding.js";
 import { DetailItem, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
@@ -129,12 +132,26 @@ export function App() {
   const [pullModelName, setPullModelName] = useState("mistral:7b");
   const [activePullJobId, setActivePullJobId] = useState<string | null>(null);
   const [modelActionMessage, setModelActionMessage] = useState<string | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [tailscaleApiToken, setTailscaleApiToken] = useState("");
+  const [createdInvite, setCreatedInvite] = useState<TailnetUserInvite | null>(null);
   const serverUrl = typeof window === "undefined" ? "http://127.0.0.1:4173" : window.location.origin;
   const system = useQuery({ queryKey: ["system"], queryFn: () => getJson<SystemStatus>("/api/system/status") });
+  const serverPower = useQuery({
+    queryKey: ["server-power"],
+    queryFn: () => getJson<AiServerPowerStatus>("/api/server/power"),
+    refetchInterval: 5000
+  });
   const resources = useQuery({ queryKey: ["system-resources"], queryFn: () => getJson<SystemResources>("/api/system/resources") });
   const models = useQuery({ queryKey: ["models"], queryFn: () => getJson<Model[]>("/api/models") });
   const accessMatrix = useQuery({ queryKey: ["model-access"], queryFn: () => getJson<ModelAccessMatrix>("/api/access/model-policies") });
   const devices = useQuery({ queryKey: ["tailscale-devices"], queryFn: () => getJson<TailnetDevice[]>("/api/network/tailscale/devices") });
+  const tailscaleApiConnection = useQuery({
+    queryKey: ["tailscale-api-connection"],
+    queryFn: () => getJson<TailscaleApiConnectionStatus>("/api/settings/tailscale-api")
+  });
   const checks = useQuery({ queryKey: ["diagnostic-checks"], queryFn: () => getJson<DiagnosticCheck[]>("/api/diagnostics/checks") });
   const activePullJob = useQuery({
     enabled: activePullJobId !== null,
@@ -154,6 +171,31 @@ export function App() {
       putJson<TailnetDevice>(`/api/network/tailscale/devices/${encodeURIComponent(input.deviceId)}`, { authorized: input.authorized }),
     onSuccess: () => {
       void refreshTailscaleState();
+    }
+  });
+  const changeServerPower = useMutation({
+    mutationFn: (action: "start" | "stop") => postJson<AiServerPowerStatus>(`/api/server/power/${action}`),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["server-power"] }),
+        queryClient.invalidateQueries({ queryKey: ["system"] }),
+        queryClient.invalidateQueries({ queryKey: ["models"] })
+      ]);
+    }
+  });
+  const createDeviceInvite = useMutation({
+    mutationFn: (email: string) => postJson<TailnetUserInvite>("/api/network/tailscale/invites", { email: email.trim() || undefined }),
+    onSuccess: (invite) => setCreatedInvite(invite)
+  });
+  const connectTailscaleApi = useMutation({
+    mutationFn: (apiToken: string) => postJson<TailscaleApiConnectionStatus>("/api/settings/tailscale-api", { apiToken }),
+    onSuccess: async () => {
+      setTailscaleApiToken("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["tailscale-api-connection"] }),
+        queryClient.invalidateQueries({ queryKey: ["tailscale-devices"] }),
+        queryClient.invalidateQueries({ queryKey: ["system"] })
+      ]);
     }
   });
   const pullModel = useMutation({
@@ -208,7 +250,7 @@ export function App() {
   const isRefreshingRuntime = models.isFetching || accessMatrix.isFetching;
   const isRefreshingTailscale = system.isFetching || devices.isFetching;
   const tailscaleHealth = system.data?.components.tailscale;
-  const canManageTailscaleDevices = getStringHealthDetail(tailscaleHealth, "mode") === "api" && tailscaleHealth?.status === "available";
+  const canManageTailscaleDevices = tailscaleApiConnection.data?.connected === true;
   const canClearModelPull = pullModelName.length > 0 || activePullJobId !== null || modelActionMessage !== null || pullModel.isError || deleteModel.isError;
   const pullFeedback = getPullFeedback({
     deleteFailed: deleteModel.isError,
@@ -234,11 +276,28 @@ export function App() {
   const loadedModels = localModelPolicies.filter((policy) => policy.loaded).length;
   const enabledModels = localModelPolicies.filter((policy) => policy.enabled).length;
   const openWebUIHealth = system.data?.components.openWebUI;
+  const serverPowerState = serverPower.data?.state ?? (openWebUIHealth?.status === "available" ? "on" : "off");
+  const isServerPowerBusy = changeServerPower.isPending || serverPowerState === "starting" || serverPowerState === "stopping";
   const activeDevices = (devices.data ?? []).filter((device) => device.authorized);
   const usageRows = activeDevices.slice(0, 4);
+  const localHostname = getStringHealthDetail(tailscaleHealth, "hostname")?.toLowerCase();
+  const serverAccessHostname = readUrlHostname(displayServerAccessUrl)?.toLowerCase();
+  const serverDevice = (devices.data ?? []).find((device) => {
+    const deviceHostname = device.hostname.toLowerCase();
+
+    return deviceHostname === localHostname
+      || device.addresses.some((address) => address.toLowerCase() === serverAccessHostname)
+      || deviceHostname === serverAccessHostname
+      || serverAccessHostname?.startsWith(`${deviceHostname}.`) === true;
+  });
+  const clientDevices = (devices.data ?? []).filter((device) => device.id !== serverDevice?.id);
+  const selectedDevice = clientDevices.find((device) => device.id === selectedDeviceId) ?? clientDevices[0];
   const onboardingShareText = settings.language === "it"
-    ? `Ciao, ti invito a utilizzare il mio server AI. Scarica Tailscale da https://tailscale.com/download oppure, se è già installato, accedi da https://login.tailscale.com con l'account indicato dal proprietario del server. Poi apri la chat: ${displayChatUrl}`
-    : `Hi, I invite you to use my AI server. Download Tailscale from https://tailscale.com/download or, if it is already installed, sign in at https://login.tailscale.com with the account provided by the server owner. Then open the chat: ${displayChatUrl}`;
+    ? `Ciao, ti invito a utilizzare il mio server AI. Installa Tailscale da https://tailscale.com/download, accetta il link personale che ti invierò e accedi con il tuo account. Poi apri la chat: ${displayChatUrl}`
+    : `Hi, I invite you to use my AI server. Install Tailscale from https://tailscale.com/download, accept the personal link I will send you and sign in with your own account. Then open the chat: ${displayChatUrl}`;
+  const generatedInviteMessage = createdInvite
+    ? buildDeviceInviteMessage(createdInvite, displayChatUrl, settings.language)
+    : "";
 
   async function refreshModelRuntimeState() {
     setModelActionMessage(tr("Refreshing runtime state…", "Aggiornamento dello stato dei modelli…"));
@@ -292,6 +351,12 @@ export function App() {
     };
   }, [settings.chatUrl, settings.setupComplete, updateSettings]);
 
+  useEffect(() => {
+    if (selectedDevice && selectedDevice.id !== selectedDeviceId) {
+      setSelectedDeviceId(selectedDevice.id);
+    }
+  }, [selectedDevice?.id, selectedDeviceId]);
+
   function confirmModelDelete(name: string) {
     if (!window.confirm(tr(`Delete ${name} from ModelDock?`, `Eliminare ${name} da ModelDock?`))) {
       return;
@@ -317,7 +382,18 @@ export function App() {
   }
 
   async function copyDeviceInviteText() {
-    await deviceInviteClipboard.copy(onboardingShareText);
+    await deviceInviteClipboard.copy(generatedInviteMessage || onboardingShareText);
+  }
+
+  function openDeviceInvite() {
+    setInviteEmail("");
+    setCreatedInvite(null);
+    createDeviceInvite.reset();
+    setIsInviteOpen(true);
+  }
+
+  function toggleAiServer() {
+    changeServerPower.mutate(serverPowerState === "on" ? "stop" : "start");
   }
 
   function updateTailnetDevice(input: { deviceId: string; hostname: string; authorized: boolean }) {
@@ -399,6 +475,24 @@ export function App() {
             <p className="eyebrow">{copy.nodeOverview}</p>
             <h1>{dashboardTitle}</h1>
           </div>
+          <button
+            aria-label={serverPowerState === "on" ? tr("Turn off AI services", "Spegni i servizi AI") : tr("Turn on AI services", "Accendi i servizi AI")}
+            className={`server-power-button ${serverPowerState}`}
+            disabled={isServerPowerBusy}
+            onClick={toggleAiServer}
+            type="button"
+          >
+            <Power aria-hidden="true" />
+            <span>
+              {isServerPowerBusy
+                ? serverPowerState === "stopping"
+                  ? tr("Stopping…", "Spegnimento…")
+                  : tr("Starting…", "Avvio…")
+                : serverPowerState === "on"
+                  ? tr("Turn off AI", "Spegni AI")
+                  : tr("Turn on AI", "Accendi AI")}
+            </span>
+          </button>
         </header>
 
         {activeView === "home" ? (
@@ -505,47 +599,47 @@ export function App() {
           <PanelHeader
             title={copy.devices}
             action={
-              <button className="panel-action-button" disabled={isRefreshingTailscale} type="button" onClick={() => void refreshTailscaleState()}>
-                {isRefreshingTailscale ? <span className="text-spinner" aria-hidden="true">◐</span> : null}
-                {tr("Refresh devices", "Aggiorna dispositivi")}
-              </button>
+              <div className="panel-actions">
+                <button className="primary-compact-button" onClick={openDeviceInvite} type="button">
+                  <Plus aria-hidden="true" /> {tr("Invite device", "Invita dispositivo")}
+                </button>
+                <button className="panel-action-button" disabled={isRefreshingTailscale} type="button" onClick={() => void refreshTailscaleState()}>
+                  {isRefreshingTailscale ? <span className="text-spinner" aria-hidden="true">◐</span> : null}
+                  {tr("Refresh", "Aggiorna")}
+                </button>
+              </div>
             }
           />
-          <TailscaleSummary devices={devices.data ?? []} health={tailscaleHealth} language={settings.language} />
-          <div className="device-overview">
-            <DetailItem label={tr("Visible devices", "Dispositivi visibili")} value={`${devices.data?.length ?? 0}`} />
-            <DetailItem label={tr("Online", "Connessi")} value={`${onlineDevices}`} />
-            <DetailItem label={tr("Active", "Attivi")} value={`${(devices.data ?? []).filter((device) => device.authorized).length}`} />
-            <DetailItem label={tr("Network layer", "Rete privata")} value="Tailscale" />
-          </div>
-          <article className="invite-device-card">
-            <div>
-              <span className="flow-step">{tr("Invite", "Invito")}</span>
-              <h3>{tr("Add a new device", "Aggiungi un dispositivo")}</h3>
-              <p>{tr("Send a simple setup message to the client device. After Tailscale login, come back here and refresh Devices to approve or verify access.", "Invia al dispositivo il messaggio guidato. Dopo l'accesso a Tailscale, torna qui e aggiorna la lista per approvare o verificare l'accesso.")}</p>
-            </div>
-            <div className="invite-actions">
-              <button className="secondary-button" type="button" onClick={() => void copyDeviceInviteText()}>
-                {deviceInviteClipboard.copied ? copy.copied : tr("Copy invite", "Copia invito")}
-              </button>
-              <a className="link-button" href="#onboarding">
-                {tr("Open guide", "Apri guida")}
-              </a>
-            </div>
-          </article>
           {devices.isError ? <ErrorState message={tr("Tailscale devices are not available.", "I dispositivi Tailscale non sono disponibili.")} /> : null}
-          {!devices.isError && (devices.data ?? []).length === 0 ? <p className="empty">{tr("No Tailscale devices available yet.", "Non sono ancora disponibili dispositivi Tailscale.")}</p> : null}
-          <div className="device-grid">
-            {(devices.data ?? []).map((device) => (
-              <NetworkDeviceCard
-                canManage={canManageTailscaleDevices}
-                device={device}
-                isUpdating={updateDeviceAccess.isPending}
-                key={device.id}
-                language={settings.language}
-                onUpdate={updateTailnetDevice}
-              />
-            ))}
+          <div className="devices-layout">
+            <DeviceTopology
+              devices={devices.data ?? []}
+              health={tailscaleHealth}
+              language={settings.language}
+              onSelect={setSelectedDeviceId}
+              selectedDeviceId={selectedDevice?.id}
+              serverDeviceId={serverDevice?.id}
+            />
+            <div className="devices-detail-column">
+              <TailscaleSummary devices={devices.data ?? []} health={tailscaleHealth} language={settings.language} />
+              {selectedDevice ? (
+                <section className="selected-device-panel">
+                  <span className="flow-step">{tr("Selected device", "Dispositivo selezionato")}</span>
+                  <NetworkDeviceCard
+                    canManage={canManageTailscaleDevices}
+                    device={selectedDevice}
+                    isUpdating={updateDeviceAccess.isPending}
+                    language={settings.language}
+                    onUpdate={updateTailnetDevice}
+                  />
+                </section>
+              ) : (
+                <article className="device-detail-empty">
+                  <h3>{tr("No client selected", "Nessun client selezionato")}</h3>
+                  <p>{tr("Invite a device to add it to this private network.", "Invita un dispositivo per aggiungerlo a questa rete privata.")}</p>
+                </article>
+              )}
+            </div>
           </div>
           <p className="panel-note">
             {canManageTailscaleDevices
@@ -832,8 +926,123 @@ export function App() {
         </section> : null}
 
       </section>
+      {isInviteOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.currentTarget === event.target) setIsInviteOpen(false);
+        }}>
+          <section aria-labelledby="device-invite-title" aria-modal="true" className="invite-modal" role="dialog">
+            <div className="modal-heading">
+              <div>
+                <span className="flow-step">Tailscale</span>
+                <h2 id="device-invite-title">{tr("Invite a device", "Invita un dispositivo")}</h2>
+                <p>{tr("Create a personal, one-time link. The recipient signs in with their own account; ModelDock never shares your Tailscale credentials.", "Crea un link personale e monouso. La persona accederà con il proprio account: ModelDock non condivide mai le tue credenziali Tailscale.")}</p>
+              </div>
+              <button aria-label={tr("Close invitation", "Chiudi invito")} className="modal-close-button" onClick={() => setIsInviteOpen(false)} type="button">
+                <X aria-hidden="true" />
+              </button>
+            </div>
+
+            {!createdInvite && !canManageTailscaleDevices ? (
+              <form className="invite-form" onSubmit={(event) => {
+                event.preventDefault();
+                connectTailscaleApi.mutate(tailscaleApiToken);
+              }}>
+                <div>
+                  <h3>{tr("Connect invitations once", "Collega gli inviti una sola volta")}</h3>
+                  <p className="invite-security-note">{tr("Paste a Tailscale API key. It is stored only in the local .env file and is never included in invitation messages.", "Incolla una chiave API Tailscale. Verrà salvata solamente nel file .env locale e non sarà mai inserita nei messaggi di invito.")}</p>
+                </div>
+                <label>
+                  <span>{tr("Tailscale API key", "Chiave API Tailscale")}</span>
+                  <input
+                    aria-label={tr("Tailscale API key", "Chiave API Tailscale")}
+                    autoComplete="off"
+                    onChange={(event) => setTailscaleApiToken(event.target.value)}
+                    placeholder="tskey-api-…"
+                    type="password"
+                    value={tailscaleApiToken}
+                  />
+                </label>
+                <a className="inline-help-link" href="https://login.tailscale.com/admin/settings/keys" rel="noreferrer" target="_blank">
+                  {tr("Create a key in Tailscale", "Crea una chiave su Tailscale")}
+                </a>
+                {connectTailscaleApi.isError || tailscaleApiConnection.data?.configured && !tailscaleApiConnection.data.connected ? (
+                  <p className="error-copy">{tr("The key could not be verified. Check that it is active and has the required permissions.", "Non è stato possibile verificare la chiave. Controlla che sia attiva e disponga dei permessi necessari.")}</p>
+                ) : null}
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={() => setIsInviteOpen(false)} type="button">{tr("Cancel", "Annulla")}</button>
+                  <button className="primary-compact-button" disabled={connectTailscaleApi.isPending || tailscaleApiToken.trim().length < 12} type="submit">
+                    {connectTailscaleApi.isPending ? tr("Checking…", "Verifica…") : tr("Connect securely", "Collega in sicurezza")}
+                  </button>
+                </div>
+              </form>
+            ) : !createdInvite ? (
+              <form className="invite-form" onSubmit={(event) => {
+                event.preventDefault();
+                createDeviceInvite.mutate(inviteEmail);
+              }}>
+                <label>
+                  <span>{tr("Recipient email (optional)", "Email del destinatario (facoltativa)")}</span>
+                  <input
+                    aria-label={tr("Recipient email", "Email del destinatario")}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="nome@email.com"
+                    type="email"
+                    value={inviteEmail}
+                  />
+                </label>
+                <p className="invite-security-note">{tr("The link will add the person as a member of this private network and can be used only once.", "Il link aggiungerà la persona come membro della rete privata e potrà essere usato una sola volta.")}</p>
+                {createDeviceInvite.isError ? (
+                  <p className="error-copy">{tr("The invite could not be created. Check the Tailscale API key and its permissions.", "Non è stato possibile creare l'invito. Controlla la chiave API Tailscale e i relativi permessi.")}</p>
+                ) : null}
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={() => setIsInviteOpen(false)} type="button">{tr("Cancel", "Annulla")}</button>
+                  <button className="primary-compact-button" disabled={createDeviceInvite.isPending} type="submit">
+                    {createDeviceInvite.isPending ? tr("Creating…", "Creazione…") : tr("Create secure invite", "Crea invito sicuro")}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="invite-result">
+                <div className="invite-success-heading">
+                  <StatusDot label={tr("Invitation ready", "Invito pronto")} on={true} />
+                  <div>
+                    <strong>{tr("Invitation ready", "Invito pronto")}</strong>
+                    <p>{tr("Copy this message and send it by email or chat.", "Copia questo messaggio e invialo tramite email o chat.")}</p>
+                  </div>
+                </div>
+                <textarea aria-label={tr("Invitation message", "Messaggio di invito")} readOnly value={generatedInviteMessage} />
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={() => {
+                    setCreatedInvite(null);
+                    createDeviceInvite.reset();
+                  }} type="button">{tr("Create another", "Nuovo invito")}</button>
+                  <button className="primary-compact-button" onClick={() => void copyDeviceInviteText()} type="button">
+                    {deviceInviteClipboard.copied ? copy.copied : tr("Copy message", "Copia messaggio")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
     </main>
   );
+}
+
+function buildDeviceInviteMessage(invite: TailnetUserInvite, chatUrl: string, language: LanguagePreference): string {
+  if (language === "it") {
+    return `Ciao, ti invito a utilizzare il mio server AI.\n\n1. Installa Tailscale: https://tailscale.com/download\n2. Accetta questo invito personale: ${invite.inviteUrl}\n3. Accedi a Tailscale con il tuo account Google, GitHub o un altro provider.\n4. Quando la connessione è attiva, apri la chat: ${chatUrl}\n\nLe credenziali della chat ti verranno fornite separatamente.`;
+  }
+
+  return `Hi, I invite you to use my AI server.\n\n1. Install Tailscale: https://tailscale.com/download\n2. Accept this personal invitation: ${invite.inviteUrl}\n3. Sign in to Tailscale with your own Google, GitHub or another provider account.\n4. When the connection is active, open the chat: ${chatUrl}\n\nChat credentials will be provided separately.`;
+}
+
+function readUrlHostname(value: string): string | undefined {
+  try {
+    return new URL(value).hostname || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isModelUpdatePending(isPending: boolean, variables: UpdateModelAccessInput | undefined, modelName: string): boolean {

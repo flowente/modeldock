@@ -134,6 +134,41 @@ describe("ModelDock API", () => {
     });
   });
 
+  it("turns the managed AI services off and on while keeping ModelDock available", async () => {
+    let chatRunning = true;
+    const powerApp = await buildApp({
+      openWebUIBaseUrl: "http://127.0.0.1:8080",
+      openWebUIFetch: async () => chatRunning ? new Response("ok") : new Response("offline", { status: 503 }),
+      openWebUIRuntime: {
+        getDataDir: () => "C:\\ModelDock\\open-webui",
+        getLog: () => [],
+        isStartedByModelDock: () => chatRunning,
+        isUvAvailable: async () => true,
+        prepareManagedRuntime: async () => true,
+        start: async () => {
+          chatRunning = true;
+          return { started: true, message: "started" };
+        },
+        stop: async () => {
+          chatRunning = false;
+          return { stopped: true, message: "stopped" };
+        }
+      }
+    });
+
+    try {
+      expect((await powerApp.inject({ method: "GET", url: "/api/server/power" })).json()).toMatchObject({ state: "on" });
+
+      const stopped = (await powerApp.inject({ method: "POST", url: "/api/server/power/stop" })).json();
+      expect(stopped).toMatchObject({ state: "off", chatReady: false, loadedModels: 0 });
+
+      const started = (await powerApp.inject({ method: "POST", url: "/api/server/power/start" })).json();
+      expect(started).toMatchObject({ state: "on", ollamaReady: true, chatReady: true });
+    } finally {
+      await powerApp.close();
+    }
+  });
+
   it("returns Ollama setup status with the configured models path", async () => {
     const configuredPath = "D:\\ModelDock\\ollama-models";
     const setupApp = await buildApp({ ollamaModelsPath: configuredPath });
@@ -663,6 +698,58 @@ describe("ModelDock API", () => {
       hostname: "modeldock-node",
       authorized: true
     });
+  });
+
+  it("creates a real member invite through the configured Tailscale gateway", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/network/tailscale/invites",
+      payload: { email: "Guest@Example.com" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: "invite-1",
+      inviteUrl: "https://login.tailscale.com/uinv/modeldock-test",
+      role: "member",
+      email: "guest@example.com"
+    });
+  });
+
+  it("stores and activates the Tailscale API key without exposing it back to the browser", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "modeldock-tailscale-settings-"));
+    const envPath = join(tempDirectory, ".env");
+    await writeFile(envPath, "MODELDOCK_TAILSCALE_API_TOKEN=\n", "utf8");
+    const settingsApp = await buildApp({
+      localEnvPath: envPath,
+      tailscaleMode: "cli",
+      tailscaleFetch: async (url) => {
+        if (String(url).includes("/user-invites")) {
+          return Response.json({ id: "invite-live", inviteUrl: "https://login.tailscale.com/uinv/live", role: "member" });
+        }
+
+        return Response.json({ devices: [] });
+      }
+    });
+
+    try {
+      const response = await settingsApp.inject({
+        method: "POST",
+        url: "/api/settings/tailscale-api",
+        payload: { apiToken: "tskey-api-local-secret" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ configured: true, connected: true, message: "Tailscale API is reachable (0 devices)" });
+      expect(JSON.stringify(response.json())).not.toContain("tskey-api-local-secret");
+      expect(await readFile(envPath, "utf8")).toContain("MODELDOCK_TAILSCALE_API_TOKEN=tskey-api-local-secret");
+
+      const inviteResponse = await settingsApp.inject({ method: "POST", url: "/api/network/tailscale/invites", payload: {} });
+      expect(inviteResponse.json()).toMatchObject({ id: "invite-live", inviteUrl: "https://login.tailscale.com/uinv/live" });
+    } finally {
+      await settingsApp.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
   });
 
   it("updates tailnet device authorization and emits audit", async () => {

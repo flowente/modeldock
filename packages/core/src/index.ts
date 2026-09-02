@@ -56,6 +56,18 @@ export interface SystemResources {
   };
 }
 
+export type AiServerPowerState = "on" | "off" | "starting" | "stopping" | "degraded";
+
+export interface AiServerPowerStatus {
+  state: AiServerPowerState;
+  ollamaReady: boolean;
+  chatReady: boolean;
+  managedChat: boolean;
+  loadedModels: number;
+  message: string;
+  updatedAt: string;
+}
+
 export interface OllamaSetupStatus {
   health: ComponentHealth;
   modelsPath: string;
@@ -102,6 +114,12 @@ export interface TailscaleSetupStatus {
   addresses: string[];
   suggestedServerUrl?: string;
   apiRequiredForDeviceWrites: boolean;
+  message: string;
+}
+
+export interface TailscaleApiConnectionStatus {
+  configured: boolean;
+  connected: boolean;
   message: string;
 }
 
@@ -263,6 +281,19 @@ export interface TailnetDevice {
   lastSeen?: string;
 }
 
+export interface CreateTailnetUserInviteInput {
+  email?: string;
+  role?: "member";
+}
+
+export interface TailnetUserInvite {
+  id: string;
+  inviteUrl: string;
+  role: "member";
+  email?: string;
+  expiresAt?: string;
+}
+
 export interface UpdateTailnetDeviceInput {
   deviceId: string;
   authorized: boolean;
@@ -328,6 +359,7 @@ export interface OllamaGateway {
 export interface TailscaleGateway {
   getLocalStatus(): Promise<ComponentHealth>;
   listDevices(): Promise<TailnetDevice[]>;
+  createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite>;
   updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice>;
 }
 
