@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   prepareOpenWebUIRuntimeBundle,
+  resolvePreparedRuntimePythonPath,
   resolveOpenWebUIRuntimeBaseDir,
   resolveOpenWebUIRuntimeTarget
 } from "./openwebui-runtime.ts";
@@ -22,6 +23,22 @@ describe("prepared Open WebUI runtime", () => {
     );
     expect(resolveOpenWebUIRuntimeBaseDir("darwin", "/Users/simone")).toBe(
       "/Users/simone/.modeldock/runtime/open-webui"
+    );
+  });
+
+  it("adds the pywin32 import paths only to the Windows prepared runtime", () => {
+    expect(resolvePreparedRuntimePythonPath("C:\\runtime\\site-packages", "win32", "C:\\custom")).toBe(
+      [
+        "C:\\runtime\\site-packages",
+        "C:\\runtime\\site-packages\\win32",
+        "C:\\runtime\\site-packages\\win32\\lib",
+        "C:\\runtime\\site-packages\\Pythonwin",
+        "C:\\runtime\\site-packages\\pywin32_system32",
+        "C:\\custom"
+      ].join(";")
+    );
+    expect(resolvePreparedRuntimePythonPath("/runtime/site-packages", "darwin", "/custom")).toBe(
+      "/runtime/site-packages:/custom"
     );
   });
 

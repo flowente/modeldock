@@ -5,9 +5,9 @@ import { arch, homedir, platform, tmpdir } from "node:os";
 import { basename, dirname, join, posix, win32 } from "node:path";
 import { spawn } from "node:child_process";
 
-const DEFAULT_RUNTIME_VERSION = "5";
+const DEFAULT_RUNTIME_VERSION = "6";
 const DEFAULT_MANIFEST_URL =
-  "https://github.com/flowente/modeldock/releases/download/openwebui-runtime-v5/manifest.json";
+  "https://github.com/flowente/modeldock/releases/download/openwebui-runtime-v6/manifest.json";
 
 export type OpenWebUIRuntimeTarget = "windows-x64" | "macos-arm64" | "macos-x64";
 
@@ -35,6 +35,29 @@ export interface PreparedOpenWebUIRuntime {
 export interface RuntimePreparationProgress {
   message: string;
   percent?: number;
+}
+
+export function resolvePreparedRuntimePythonPath(
+  sitePackagesPath: string,
+  platformId: NodeJS.Platform = platform(),
+  existingPythonPath?: string
+): string {
+  const paths = [sitePackagesPath];
+
+  if (platformId === "win32") {
+    paths.push(
+      join(sitePackagesPath, "win32"),
+      join(sitePackagesPath, "win32", "lib"),
+      join(sitePackagesPath, "Pythonwin"),
+      join(sitePackagesPath, "pywin32_system32")
+    );
+  }
+
+  if (existingPythonPath) {
+    paths.push(existingPythonPath);
+  }
+
+  return paths.join(platformId === "win32" ? ";" : ":");
 }
 
 export function resolveOpenWebUIRuntimeTarget(

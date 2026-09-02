@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, freemem, homedir, hostname as getOsHostname, platform, totalmem } from "node:os";
-import { delimiter, join, posix } from "node:path";
+import { join, posix } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   buildSystemStatus,
@@ -34,6 +34,7 @@ import { TailscaleApiGateway, TailscaleCliGateway } from "@modeldock/tailscale-a
 import { createFakeDependencies } from "@modeldock/testing";
 import {
   prepareOpenWebUIRuntimeBundle,
+  resolvePreparedRuntimePythonPath,
   type PreparedOpenWebUIRuntime,
   type RuntimePreparationProgress
 } from "./openwebui-runtime.ts";
@@ -1346,7 +1347,11 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
           OLLAMA_BASE_URL: "http://127.0.0.1:11434",
           ...(usePreparedRuntime && preparedRuntime
             ? {
-                PYTHONPATH: [preparedRuntime.sitePackagesPath, process.env.PYTHONPATH].filter(Boolean).join(delimiter)
+                PYTHONPATH: resolvePreparedRuntimePythonPath(
+                  preparedRuntime.sitePackagesPath,
+                  platform(),
+                  process.env.PYTHONPATH
+                )
               }
             : {}),
           PORT: String(input.port)

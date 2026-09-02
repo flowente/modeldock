@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 
 const target = process.argv[2];
-const runtimeVersion = process.argv[3] ?? "5";
+const runtimeVersion = process.argv[3] ?? "6";
 const supportedTargets = new Set(["windows-x64", "macos-arm64", "macos-x64"]);
 
 if (!target || !supportedTargets.has(target)) {
@@ -69,16 +69,22 @@ run(
   uvEnvironment
 );
 
+const runtimePythonPath = resolveRuntimePythonPath(sitePackagesDir, isWindows);
 run(
   bundlePython,
-  ["-c", "import open_webui; print('Open WebUI runtime import succeeded')"],
+  [
+    "-c",
+    isWindows
+      ? "import open_webui, pywintypes, win32api; print('Open WebUI Windows runtime imports succeeded')"
+      : "import open_webui; print('Open WebUI runtime import succeeded')"
+  ],
   {
     ...process.env,
-    PYTHONPATH: sitePackagesDir
+    PYTHONPATH: runtimePythonPath
   }
 );
 try {
-  await verifyServerStartup(bundlePython, sitePackagesDir, targetRoot);
+  await verifyServerStartup(bundlePython, runtimePythonPath, targetRoot);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`::error title=Open WebUI HTTP smoke test failed::${escapeWorkflowCommand(message)}\n`);
@@ -112,7 +118,7 @@ function run(command, args, env) {
   });
 }
 
-async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
+async function verifyServerStartup(pythonPath, runtimePythonPath, buildRoot) {
   const smokeDataDir = join(buildRoot, "smoke-data");
   const port = 18080;
   const child = spawn(
@@ -127,7 +133,7 @@ async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
       ENABLE_SIGNUP: "false",
       OLLAMA_BASE_URL: "http://127.0.0.1:11434",
       PORT: String(port),
-      PYTHONPATH: sitePackagesPath,
+      PYTHONPATH: runtimePythonPath,
       WEBUI_SECRET_KEY: "modeldock-runtime-build-smoke-test"
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -171,6 +177,21 @@ async function verifyServerStartup(pythonPath, sitePackagesPath, buildRoot) {
 
     rmSync(smokeDataDir, { force: true, recursive: true });
   }
+}
+
+function resolveRuntimePythonPath(sitePackagesPath, includeWindowsExtensions) {
+  const paths = [sitePackagesPath];
+
+  if (includeWindowsExtensions) {
+    paths.push(
+      join(sitePackagesPath, "win32"),
+      join(sitePackagesPath, "win32", "lib"),
+      join(sitePackagesPath, "Pythonwin"),
+      join(sitePackagesPath, "pywin32_system32")
+    );
+  }
+
+  return paths.join(process.platform === "win32" ? ";" : ":");
 }
 
 function escapeWorkflowCommand(value) {
