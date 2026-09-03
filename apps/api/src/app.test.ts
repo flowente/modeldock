@@ -19,7 +19,7 @@ describe("Open WebUI runtime diagnostics", () => {
     expect(resolveManagedOpenWebUIBootstrapEnvironment()).toEqual({
       ENABLE_API_KEYS: "true",
       ENABLE_INITIAL_ADMIN_SIGNUP: "true",
-      ENABLE_SIGNUP: "true"
+      ENABLE_SIGNUP: "false"
     });
   });
 

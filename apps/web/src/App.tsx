@@ -33,6 +33,8 @@ import { getStringHealthDetail } from "./lib/health.js";
 import { getPullFeedback, isPullJobActive, isPullJobTerminal } from "./lib/pull-jobs.js";
 import { DEFAULT_SETTINGS, type BackgroundPreference, type LanguagePreference, type ModelRuntimeAction, type UpdateModelAccessInput } from "./types.js";
 
+const DEFAULT_LOCAL_CHAT_URL = "http://127.0.0.1:8080";
+
 const uiCopy = {
   en: {
     brandSubtitle: "Local LLM control plane",
@@ -121,8 +123,8 @@ const backgroundLabels: Record<BackgroundPreference, { en: string; it: string }>
 
 export function App() {
   const queryClient = useQueryClient();
-  const activeView = useHashRoute();
   const { settings, updateSettings } = useAppSettings();
+  const activeView = useHashRoute(settings.setupComplete);
   const tr = (english: string, italian: string) => settings.language === "it" ? italian : english;
   const serverUrlClipboard = useClipboard();
   const chatUrlClipboard = useClipboard();
@@ -262,7 +264,9 @@ export function App() {
     language: settings.language
   });
   const normalizedServerName = settings.serverName.trim() || DEFAULT_SETTINGS.serverName;
-  const displayChatUrl = settings.chatUrl.trim() || serverUrl;
+  // Never fall back to the dashboard origin: the chat lives on Open WebUI
+  // (local :8080 until the private tailnet URL is detected), not on ModelDock.
+  const displayChatUrl = settings.chatUrl.trim() || DEFAULT_LOCAL_CHAT_URL;
   const displayServerAccessUrl = settings.serverAccessUrl.trim() || serverUrl;
   const dashboardTitle = settings.language === "it" ? `AI Server di ${normalizedServerName}` : `${normalizedServerName} AI Server`;
   const copy = uiCopy[settings.language];
@@ -326,7 +330,9 @@ export function App() {
   }, [pullJob?.id, pullJob?.model, pullJob?.status]);
 
   useEffect(() => {
-    if (!settings.setupComplete || !settings.chatUrl.trim()) {
+    // Run detection precisely when the shareable URL is missing or still points
+    // at this machine - that is exactly when we need the private tailnet URL.
+    if (!settings.setupComplete) {
       return undefined;
     }
 
@@ -411,16 +417,23 @@ export function App() {
 
   if (activeView === "welcome") {
     return (
-      <WelcomeExperience
-        activeStep={welcomeStep}
-        chatUrl={displayChatUrl}
-        copied={onboardingClipboard.copied}
-        copyInvite={() => void copyOnboardingText()}
-        inviteMessage={onboardingShareText}
-        settings={settings}
-        setActiveStep={setWelcomeStep}
-        updateSettings={updateSettings}
-      />
+      <>
+        {settings.setupComplete ? (
+          <a className="welcome-exit-link" href="#home">
+            {tr("Go to dashboard", "Vai alla dashboard")}
+          </a>
+        ) : null}
+        <WelcomeExperience
+          activeStep={welcomeStep}
+          chatUrl={displayChatUrl}
+          copied={onboardingClipboard.copied}
+          copyInvite={() => void copyOnboardingText()}
+          inviteMessage={onboardingShareText}
+          settings={settings}
+          setActiveStep={setWelcomeStep}
+          updateSettings={updateSettings}
+        />
+      </>
     );
   }
 

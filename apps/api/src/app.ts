@@ -118,10 +118,13 @@ export function resolveManagedOpenWebUIRuntimeProfile(
 }
 
 export function resolveManagedOpenWebUIBootstrapEnvironment(): Record<string, string> {
+  // Only the first administrator may be created (ENABLE_INITIAL_ADMIN_SIGNUP).
+  // Public self-registration stays off so nobody who can reach the chat can
+  // create their own account. ModelDock provisions access explicitly.
   return {
     ENABLE_API_KEYS: "true",
     ENABLE_INITIAL_ADMIN_SIGNUP: "true",
-    ENABLE_SIGNUP: "true"
+    ENABLE_SIGNUP: "false"
   };
 }
 
@@ -1625,7 +1628,9 @@ function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
         await mkdir(input.dataDir, { recursive: true });
       }
 
-      const serveArgs = ["serve", "--host", "0.0.0.0", "--port", String(input.port)];
+      // Bind to loopback only. The chat is reached locally by ModelDock and, for
+      // remote clients, exposed through the private tailnet - never the raw LAN.
+      const serveArgs = ["serve", "--host", "127.0.0.1", "--port", String(input.port)];
       const runtimeProfile = resolveManagedOpenWebUIRuntimeProfile(platform(), arch(), input.compatibilityMode);
       const managedArgs = [
         "--python",

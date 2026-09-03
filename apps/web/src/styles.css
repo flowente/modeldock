@@ -2577,3 +2577,23 @@ code {
     width: 100%;
   }
 }
+
+.welcome-exit-link {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 20;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: inherit;
+  background: rgba(127, 127, 127, 0.14);
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  backdrop-filter: blur(6px);
+}
+
+.welcome-exit-link:hover {
+  background: rgba(127, 127, 127, 0.24);
+}

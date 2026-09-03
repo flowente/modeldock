@@ -539,8 +539,11 @@ export function withPort(value: string, port: number): string {
 
 export function resolveVisibleChatUrl(runtimeUrl: string, detectedPrivateUrl: string): string {
   const privateUrl = detectedPrivateUrl.trim();
+  const current = runtimeUrl.trim();
 
-  if (isLoopbackUrl(runtimeUrl) && privateUrl && !isLoopbackUrl(privateUrl)) {
+  // Adopt the detected private (tailnet) address when we do not yet have a
+  // shareable URL, or when the current one is only reachable on this machine.
+  if ((!current || isLoopbackUrl(current)) && privateUrl && !isLoopbackUrl(privateUrl)) {
     return privateUrl;
   }
 
