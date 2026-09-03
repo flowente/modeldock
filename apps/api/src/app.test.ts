@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import {
   buildApp,
+  buildClientInviteMessage,
   provisionOpenWebUIAdmin,
   resolveManagedOpenWebUIBootstrapEnvironment,
   resolveManagedOpenWebUIRuntimeProfile,
@@ -774,6 +775,38 @@ describe("ModelDock API", () => {
       module: "network",
       resourceId: "phone_1"
     });
+  });
+});
+
+describe("Client invite flow", () => {
+  it("builds a ready-to-send invite message with the key and chat address", () => {
+    const message = buildClientInviteMessage("tskey-auth-abc", "https://server.taildomain.ts.net");
+
+    expect(message).toContain("tskey-auth-abc");
+    expect(message).toContain("tailscale up --auth-key=tskey-auth-abc");
+    expect(message).toContain("https://server.taildomain.ts.net");
+    expect(message).toContain("single-use");
+  });
+
+  it("generates an auth-key invite through the API in fake mode", async () => {
+    const app = await buildApp({ logger: false, tailscaleMode: "fake" });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/network/tailscale/auth-keys",
+        payload: { chatUrl: "https://server.taildomain.ts.net" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.key).toBe("tskey-auth-modeldock-test");
+      expect(body.ephemeral).toBe(true);
+      expect(body.clientMessage).toContain("tskey-auth-modeldock-test");
+      expect(body.clientMessage).toContain("https://server.taildomain.ts.net");
+    } finally {
+      await app.close();
+    }
   });
 });
 

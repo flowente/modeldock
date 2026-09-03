@@ -136,7 +136,7 @@ export function App() {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [tailscaleApiToken, setTailscaleApiToken] = useState("");
-  const [createdInvite, setCreatedInvite] = useState<TailnetUserInvite | null>(null);
+  const [createdInvite, setCreatedInvite] = useState<AuthKeyInvite | null>(null);
   const serverUrl = typeof window === "undefined" ? "http://127.0.0.1:4173" : window.location.origin;
   const system = useQuery({ queryKey: ["system"], queryFn: () => getJson<SystemStatus>("/api/system/status") });
   const serverPower = useQuery({
@@ -184,7 +184,8 @@ export function App() {
     }
   });
   const createDeviceInvite = useMutation({
-    mutationFn: (email: string) => postJson<TailnetUserInvite>("/api/network/tailscale/invites", { email: email.trim() || undefined }),
+    mutationFn: (_email: string) =>
+      postJson<AuthKeyInvite>("/api/network/tailscale/auth-keys", { chatUrl: displayChatUrl || undefined }),
     onSuccess: (invite) => setCreatedInvite(invite)
   });
   const connectTailscaleApi = useMutation({
@@ -296,7 +297,7 @@ export function App() {
     ? `Ciao, ti invito a utilizzare il mio server AI. Installa Tailscale da https://tailscale.com/download, accetta il link personale che ti invierò e accedi con il tuo account. Poi apri la chat: ${displayChatUrl}`
     : `Hi, I invite you to use my AI server. Install Tailscale from https://tailscale.com/download, accept the personal link I will send you and sign in with your own account. Then open the chat: ${displayChatUrl}`;
   const generatedInviteMessage = createdInvite
-    ? buildDeviceInviteMessage(createdInvite, displayChatUrl, settings.language)
+    ? buildDeviceInviteMessage(createdInvite.key, displayChatUrl, settings.language)
     : "";
 
   async function refreshModelRuntimeState() {
@@ -935,7 +936,7 @@ export function App() {
               <div>
                 <span className="flow-step">Tailscale</span>
                 <h2 id="device-invite-title">{tr("Invite a device", "Invita un dispositivo")}</h2>
-                <p>{tr("Create a personal, one-time link. The recipient signs in with their own account; ModelDock never shares your Tailscale credentials.", "Crea un link personale e monouso. La persona accederà con il proprio account: ModelDock non condivide mai le tue credenziali Tailscale.")}</p>
+                <p>{tr("Create a one-time key. The recipient joins your private network with a single command — no account, no browser sign-in.", "Crea una chiave monouso. La persona entra nella tua rete privata con un solo comando: nessun account, nessun accesso via browser.")}</p>
               </div>
               <button aria-label={tr("Close invitation", "Chiudi invito")} className="modal-close-button" onClick={() => setIsInviteOpen(false)} type="button">
                 <X aria-hidden="true" />
@@ -978,19 +979,9 @@ export function App() {
             ) : !createdInvite ? (
               <form className="invite-form" onSubmit={(event) => {
                 event.preventDefault();
-                createDeviceInvite.mutate(inviteEmail);
+                createDeviceInvite.mutate("");
               }}>
-                <label>
-                  <span>{tr("Recipient email (optional)", "Email del destinatario (facoltativa)")}</span>
-                  <input
-                    aria-label={tr("Recipient email", "Email del destinatario")}
-                    onChange={(event) => setInviteEmail(event.target.value)}
-                    placeholder="nome@email.com"
-                    type="email"
-                    value={inviteEmail}
-                  />
-                </label>
-                <p className="invite-security-note">{tr("The link will add the person as a member of this private network and can be used only once.", "Il link aggiungerà la persona come membro della rete privata e potrà essere usato una sola volta.")}</p>
+                <p className="invite-security-note">{tr("A single-use key lets the device join this private network without a Tailscale account. It expires in 1 hour.", "Una chiave monouso fa entrare il dispositivo nella rete privata senza un account Tailscale. Scade dopo 1 ora.")}</p>
                 {createDeviceInvite.isError ? (
                   <p className="error-copy">{tr("The invite could not be created. Check the Tailscale API key and its permissions.", "Non è stato possibile creare l'invito. Controlla la chiave API Tailscale e i relativi permessi.")}</p>
                 ) : null}
@@ -1029,7 +1020,58 @@ export function App() {
   );
 }
 
-function buildDeviceInviteMessage(invite: TailnetUserInvite, chatUrl: string, language: LanguagePreference): string {
+interface AuthKeyInvite {
+  id: string;
+  key: string;
+  reusable: boolean;
+  ephemeral: boolean;
+  tags: string[];
+  expiresAt?: string;
+  chatUrl: string | null;
+  clientMessage: string;
+}
+
+function buildDeviceInviteMessage(authKey: string, chatUrl: string, language: LanguagePreference): string {
+  const chatLine = chatUrl && chatUrl.trim() ? chatUrl.trim() : undefined;
+
+  if (language === "it") {
+    return [
+      "Ciao, ti invito a usare il mio server AI privato.",
+      "",
+      "1. Scarica ed esegui l'helper di connessione ModelDock per il tuo sistema.",
+      "2. Quando richiesto, incolla questa chiave monouso (valida 1 ora):",
+      "",
+      `   ${authKey}`,
+      "",
+      "Oppure, se hai già Tailscale installato, esegui:",
+      "",
+      `   tailscale up --auth-key=${authKey}`,
+      "",
+      chatLine ? `Poi apri la chat: ${chatLine}` : "L'indirizzo della chat ti verrà comunicato a parte.",
+      "",
+      "La chiave è monouso e scade tra 1 ora. Non condividerla."
+    ].join("\n");
+  }
+
+  return [
+    "Hi, I invite you to use my private AI server.",
+    "",
+    "1. Download and run the ModelDock join helper for your system.",
+    "2. When asked, paste this one-time key (valid for 1 hour):",
+    "",
+    `   ${authKey}`,
+    "",
+    "Or, if you already have Tailscale installed, run:",
+    "",
+    `   tailscale up --auth-key=${authKey}`,
+    "",
+    chatLine ? `Then open the chat: ${chatLine}` : "The chat address will be shared separately.",
+    "",
+    "This key is single-use and expires in 1 hour. Do not share it."
+  ].join("\n");
+}
+
+function buildLegacyDeviceInviteMessage(invite: TailnetUserInvite, chatUrl: string, language: LanguagePreference): string {
   if (language === "it") {
     return `Ciao, ti invito a utilizzare il mio server AI.\n\n1. Installa Tailscale: https://tailscale.com/download\n2. Accetta questo invito personale: ${invite.inviteUrl}\n3. Accedi a Tailscale con il tuo account Google, GitHub o un altro provider.\n4. Quando la connessione è attiva, apri la chat: ${chatUrl}\n\nLe credenziali della chat ti verranno fornite separatamente.`;
   }

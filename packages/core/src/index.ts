@@ -299,6 +299,31 @@ export interface UpdateTailnetDeviceInput {
   authorized: boolean;
 }
 
+export interface CreateTailnetAuthKeyInput {
+  /** Allow the key to enrol more than one device. Prefer false for single-use invites. */
+  reusable?: boolean;
+  /** Ephemeral devices are removed automatically when they go offline. */
+  ephemeral?: boolean;
+  /** Pre-authorize devices so they join without manual approval in the admin console. */
+  preauthorized?: boolean;
+  /** ACL tags that own the joined device (e.g. ["tag:modeldock-client"]). */
+  tags?: string[];
+  /** Key lifetime in seconds before it can no longer enrol devices. */
+  expirySeconds?: number;
+  /** Human-readable label shown in the Tailscale admin console. */
+  description?: string;
+}
+
+export interface TailnetAuthKey {
+  id: string;
+  /** The secret `tskey-...` value. Handle as a credential: never log or persist it. */
+  key: string;
+  reusable: boolean;
+  ephemeral: boolean;
+  tags: string[];
+  expiresAt?: string;
+}
+
 export interface DiagnosticCheckResult {
   id: string;
   label: string;
@@ -361,6 +386,7 @@ export interface TailscaleGateway {
   listDevices(): Promise<TailnetDevice[]>;
   createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite>;
   updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice>;
+  createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey>;
 }
 
 export interface ModelDockErrorShape {

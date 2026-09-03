@@ -117,6 +117,47 @@ describe("Tailscale API gateway", () => {
       expiresAt: undefined
     });
   });
+
+  it("generates a pre-authorized, tagged, ephemeral auth key for a client invite", async () => {
+    const gateway = new TailscaleApiGateway({
+      apiToken: "tskey-api-test",
+      clock,
+      fetchImpl: async (url, init) => {
+        expect(String(url)).toBe("https://api.tailscale.com/api/v2/tailnet/-/keys");
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          description: "ModelDock client invite",
+          expirySeconds: 3600,
+          capabilities: {
+            devices: {
+              create: {
+                reusable: false,
+                ephemeral: true,
+                preauthorized: true,
+                tags: ["tag:modeldock-client"]
+              }
+            }
+          }
+        });
+
+        return jsonResponse({
+          id: "key-1",
+          key: "tskey-auth-secret",
+          expires: "2026-09-03T01:00:00.000Z",
+          capabilities: { devices: { create: { reusable: false, ephemeral: true, tags: ["tag:modeldock-client"] } } }
+        });
+      }
+    });
+
+    await expect(gateway.createAuthKey({})).resolves.toEqual({
+      id: "key-1",
+      key: "tskey-auth-secret",
+      reusable: false,
+      ephemeral: true,
+      tags: ["tag:modeldock-client"],
+      expiresAt: "2026-09-03T01:00:00.000Z"
+    });
+  });
 });
 
 function jsonResponse(body: unknown): Response {

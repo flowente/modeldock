@@ -3,7 +3,9 @@ import { promisify } from "node:util";
 import type {
   Clock,
   ComponentHealth,
+  CreateTailnetAuthKeyInput,
   CreateTailnetUserInviteInput,
+  TailnetAuthKey,
   TailnetDevice,
   TailnetUserInvite,
   TailscaleGateway,
@@ -81,6 +83,24 @@ interface TailscaleApiUserInvite {
   expiresAt?: string;
 }
 
+interface TailscaleApiAuthKey {
+  id?: string;
+  key?: string;
+  expires?: string;
+  capabilities?: {
+    devices?: {
+      create?: {
+        reusable?: boolean;
+        ephemeral?: boolean;
+        tags?: string[];
+      };
+    };
+  };
+}
+
+export const DEFAULT_MODELDOCK_CLIENT_TAG = "tag:modeldock-client";
+const DEFAULT_AUTH_KEY_EXPIRY_SECONDS = 3_600;
+
 export class TailscaleCliGateway implements TailscaleGateway {
   private readonly clock: Clock;
 
@@ -155,6 +175,15 @@ export class TailscaleCliGateway implements TailscaleGateway {
       module: "tailscale-adapter",
       message: "Creating a real Tailscale invite requires the Tailscale API adapter.",
       suggestion: "Configure a Tailscale API key before inviting a device from ModelDock."
+    });
+  }
+
+  public async createAuthKey(_input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey> {
+    throw new ModelDockError({
+      code: "TAILSCALE_WRITE_NOT_CONFIGURED",
+      module: "tailscale-adapter",
+      message: "Generating a device auth key requires the Tailscale API adapter.",
+      suggestion: "Configure a Tailscale API key with the auth_keys scope before inviting devices."
     });
   }
 
@@ -358,6 +387,52 @@ export class TailscaleApiGateway implements TailscaleGateway {
       role: "member",
       email: payload.email ?? email,
       expiresAt: payload.expiresAt
+    };
+  }
+
+  public async createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey> {
+    const tags = input.tags && input.tags.length > 0 ? input.tags : [DEFAULT_MODELDOCK_CLIENT_TAG];
+    const reusable = input.reusable ?? false;
+    const ephemeral = input.ephemeral ?? true;
+
+    const payload = await this.request<TailscaleApiAuthKey>(`/tailnet/${encodeURIComponent(this.tailnet)}/keys`, {
+      body: JSON.stringify({
+        description: input.description ?? "ModelDock client invite",
+        expirySeconds: input.expirySeconds ?? DEFAULT_AUTH_KEY_EXPIRY_SECONDS,
+        capabilities: {
+          devices: {
+            create: {
+              reusable,
+              ephemeral,
+              preauthorized: input.preauthorized ?? true,
+              tags
+            }
+          }
+        }
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    if (!payload.key) {
+      throw new ModelDockError({
+        code: "TAILSCALE_AUTH_KEY_INVALID_RESPONSE",
+        module: "tailscale-adapter",
+        message: "Tailscale created an auth key but did not return its secret value"
+      });
+    }
+
+    const created = payload.capabilities?.devices?.create;
+
+    return {
+      id: payload.id ?? "",
+      key: payload.key,
+      reusable: created?.reusable ?? reusable,
+      ephemeral: created?.ephemeral ?? ephemeral,
+      tags: created?.tags ?? tags,
+      expiresAt: payload.expires
     };
   }
 

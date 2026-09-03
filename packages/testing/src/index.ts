@@ -15,7 +15,9 @@ import type {
   OllamaGateway,
   PullModelInput,
   RunningModel,
+  CreateTailnetAuthKeyInput,
   CreateTailnetUserInviteInput,
+  TailnetAuthKey,
   TailnetDevice,
   TailnetUserInvite,
   TailscaleGateway,
@@ -289,6 +291,17 @@ export class FakeTailscaleGateway implements TailscaleGateway {
       role: "member",
       email,
       expiresAt: "2026-10-02T00:00:00.000Z"
+    };
+  }
+
+  public async createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey> {
+    return {
+      id: "authkey-1",
+      key: "tskey-auth-modeldock-test",
+      reusable: input.reusable ?? false,
+      ephemeral: input.ephemeral ?? true,
+      tags: input.tags && input.tags.length > 0 ? input.tags : ["tag:modeldock-client"],
+      expiresAt: "2026-08-29T01:00:00.000Z"
     };
   }
 

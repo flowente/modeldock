@@ -47,6 +47,13 @@ describe("diagnostics", () => {
           addresses: [],
           online: "unknown",
           authorized: true
+        }),
+        createAuthKey: async () => ({
+          id: "key_1",
+          key: "tskey-auth-test",
+          reusable: false,
+          ephemeral: true,
+          tags: ["tag:modeldock-client"]
         })
       }
     });

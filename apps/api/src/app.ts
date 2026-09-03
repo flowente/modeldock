@@ -125,6 +125,32 @@ export function resolveManagedOpenWebUIBootstrapEnvironment(): Record<string, st
   };
 }
 
+/**
+ * Builds the ready-to-send message a server owner pastes to a client.
+ * The whole point is a fluid experience: the client runs one line and is in.
+ * The auth key is a single-use credential embedded here; treat the message as a secret.
+ */
+export function buildClientInviteMessage(authKey: string, chatUrl?: string): string {
+  const chatLine = chatUrl && chatUrl.trim() ? chatUrl.trim() : "(the server owner will share the chat address)";
+
+  return [
+    "You have been invited to a private ModelDock AI server.",
+    "",
+    "1. Download and run the ModelDock join helper for your system.",
+    "2. When asked, paste this one-time key (valid for 1 hour):",
+    "",
+    `   ${authKey}`,
+    "",
+    "Or, if you already have Tailscale installed, just run:",
+    "",
+    `   tailscale up --auth-key=${authKey}`,
+    "",
+    `Then open the chat: ${chatLine}`,
+    "",
+    "This key is single-use and expires in 1 hour. Do not share it."
+  ].join("\n");
+}
+
 interface RuntimeDependencies {
   clock: Clock;
   ids: IdGenerator;
@@ -928,6 +954,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
 
     return invite;
+  });
+  app.post<{ Body: { chatUrl?: string; label?: string } }>("/api/network/tailscale/auth-keys", async (request) => {
+    const label = request.body.label?.trim() || "ModelDock client invite";
+    const authKey = await getTailscaleManagementGateway().createAuthKey({
+      description: label,
+      reusable: false,
+      ephemeral: true,
+      preauthorized: true,
+      expirySeconds: 3600
+    });
+
+    await dependencies.auditStore.append({
+      actorId: "system",
+      action: "TAILSCALE_AUTH_KEY_CREATED",
+      module: "network",
+      result: "success",
+      correlationId: request.id,
+      resourceType: "tailnet-auth-key",
+      resourceId: authKey.id
+    });
+
+    const chatUrl = request.body.chatUrl?.trim();
+    const clientMessage = buildClientInviteMessage(authKey.key, chatUrl);
+
+    return { ...authKey, chatUrl: chatUrl ?? null, clientMessage };
   });
   app.put<{ Params: { deviceId: string }; Body: { authorized?: boolean } }>("/api/network/tailscale/devices/:deviceId", async (request) => {
     if (typeof request.body.authorized !== "boolean") {
