@@ -104,6 +104,26 @@ export interface ManagedServerSetupStatus {
   updatedAt: string;
 }
 
+/**
+ * How the local chat is published to the tailnet.
+ *
+ * Open WebUI binds to loopback only. `tailscale serve` is what makes it
+ * reachable from other devices in the tailnet - and nothing else. Without it
+ * the chat is local to the server machine, so `active: false` is a real
+ * failure of the remote path, not a cosmetic detail.
+ */
+export type TailnetChatExposureMode = "https" | "http" | "none";
+
+export interface TailnetChatExposure {
+  active: boolean;
+  mode: TailnetChatExposureMode;
+  /** Shareable tailnet URL, present only when active. */
+  url?: string;
+  /** Local port being proxied (Open WebUI). */
+  port: number;
+  message: string;
+}
+
 export interface TailscaleSetupStatus {
   health: ComponentHealth;
   installed: boolean;

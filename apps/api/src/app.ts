@@ -25,6 +25,7 @@ import {
   type OpenWebUISetupStatus,
   type OpenWebUIRuntimeStatus,
   type SystemResources,
+  type TailnetChatExposure,
   type TailnetDevice,
   type TailnetUserInvite,
   type TailscaleGateway,
@@ -219,6 +220,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   let managedServerSetup = createInitialManagedServerSetupStatus(dependencies.clock);
   let powerTransition: "starting" | "stopping" | null = null;
 
+  // Tailscale in `fake` mode means tests and demos: never shell out to the real
+  // CLI there, both to stay deterministic and to keep setup fast.
+  const tailscaleIsSimulated = (options.tailscaleMode ?? "fake") === "fake";
+
+  async function publishChatToTailnet(port: number): Promise<TailnetChatExposure> {
+    if (tailscaleIsSimulated) {
+      return { active: false, mode: "none", port, message: "Tailscale is running in simulated mode, so the chat is not published." };
+    }
+
+    return exposeChatOnTailnet(port);
+  }
+
+  async function unpublishChatFromTailnet(port: number): Promise<void> {
+    if (tailscaleIsSimulated) {
+      return;
+    }
+
+    await withdrawChatFromTailnet(port);
+  }
+
   function getTailscaleManagementGateway(): TailscaleGateway {
     if (!options.tailscaleApiToken?.trim()) {
       return dependencies.tailscale;
@@ -341,6 +362,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
 
       options.openWebUIBaseUrl = baseUrl;
+      // The chat listens on loopback, so publishing it to the tailnet is what
+      // makes invited devices able to reach it at all.
+      await publishChatToTailnet(readPortFromBaseUrl(baseUrl)).catch(() => undefined);
       await dependencies.auditStore.append({
         actorId: "system",
         action: "AI_SERVER_STARTED",
@@ -381,6 +405,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           });
         }
       }
+
+      // Stop advertising the chat as soon as it stops answering, so nobody in
+      // the tailnet is left with a link that fails.
+      await unpublishChatFromTailnet(
+        readPortFromBaseUrl(resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl))
+      ).catch(() => undefined);
 
       await dependencies.auditStore.append({
         actorId: "system",
@@ -510,6 +540,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       getOllamaHealth: () => dependencies.ollama.getHealth(),
       localEnvPath: options.localEnvPath,
       openWebUIRuntime,
+      publishChat: publishChatToTailnet,
       update(next) {
         managedServerSetup = {
           ...managedServerSetup,
@@ -526,11 +557,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           state: "succeeded",
           phase: "ready",
           progress: 100,
-          message: "The local AI server and administrator chat are ready.",
+          message: result.shareUrl
+            ? "The local AI server and administrator chat are ready."
+            : `The local AI server is ready, but the chat is not published to your private network yet. ${result.exposureMessage ?? ""}`.trim(),
           ollamaReady: true,
           chatReady: true,
           adminReady: true,
-          chatUrl: result.baseUrl,
+          // Prefer the tailnet URL: it is the one a guest can actually open.
+          chatUrl: result.shareUrl ?? result.baseUrl,
           updatedAt: dependencies.clock.now().toISOString()
         };
       })
@@ -1004,6 +1038,38 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     return invite;
   });
+  app.get("/api/network/tailscale/chat-exposure", async (): Promise<TailnetChatExposure> => {
+    const port = readPortFromBaseUrl(resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl));
+
+    if (tailscaleIsSimulated) {
+      return { active: false, mode: "none", port, message: "Tailscale is running in simulated mode, so the chat is not published." };
+    }
+
+    return readChatExposure(port).catch(() => ({
+      active: false,
+      mode: "none" as const,
+      port,
+      message: "The private-network status of the chat could not be read."
+    }));
+  });
+
+  app.post("/api/network/tailscale/chat-exposure", async (request): Promise<TailnetChatExposure> => {
+    const port = readPortFromBaseUrl(resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl));
+    const exposure = await publishChatToTailnet(port);
+
+    await dependencies.auditStore.append({
+      actorId: "system",
+      action: exposure.active ? "TAILSCALE_CHAT_EXPOSED" : "TAILSCALE_CHAT_EXPOSE_FAILED",
+      module: "network",
+      result: exposure.active ? "success" : "failure",
+      correlationId: request.id,
+      resourceType: "tailnet-serve",
+      resourceId: String(port)
+    });
+
+    return exposure;
+  });
+
   app.post<{ Body: { chatUrl?: string; label?: string } }>("/api/network/tailscale/auth-keys", async (request) => {
     const label = request.body.label?.trim() || "ModelDock client invite";
     const authKey = await getTailscaleManagementGateway().createAuthKey({
@@ -1759,8 +1825,9 @@ async function runManagedServerSetup(input: {
   getOllamaHealth(): Promise<ComponentHealth>;
   localEnvPath?: string;
   openWebUIRuntime: OpenWebUIRuntimeController;
+  publishChat(port: number): Promise<TailnetChatExposure>;
   update(next: Partial<ManagedServerSetupStatus>): void;
-}): Promise<{ apiKey: string; baseUrl: string }> {
+}): Promise<{ apiKey: string; baseUrl: string; shareUrl?: string; exposureMessage?: string }> {
   const baseUrl = "http://127.0.0.1:8080";
 
   input.update({ phase: "checking", progress: 8, message: "Checking Ollama and the local chat runtime." });
@@ -1860,7 +1927,14 @@ async function runManagedServerSetup(input: {
     input.localEnvPath
   );
 
-  return { apiKey, baseUrl };
+  // `baseUrl` stays on loopback: it is how ModelDock talks to the chat.
+  // `shareUrl` is what a guest opens, and it only exists once Tailscale is
+  // publishing the port. If publishing fails there is no remote access at all,
+  // so the failure is surfaced instead of silently falling back to loopback.
+  input.update({ phase: "configuring_admin", progress: 94, message: "Publishing the chat to your private network." });
+  const exposure = await input.publishChat(readPortFromBaseUrl(baseUrl)).catch(() => undefined);
+
+  return { apiKey, baseUrl, shareUrl: exposure?.url, exposureMessage: exposure?.message };
 }
 
 async function ensureOllamaIsReady(
@@ -2162,6 +2236,172 @@ function resolveTailscaleCommandCandidatesForSetup(): string[] {
   }
 
   return ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"];
+}
+
+/**
+ * Reads `tailscale serve status --json` and finds the entry that proxies the
+ * given local port, returning the URL other tailnet devices should open.
+ *
+ * Kept pure so the shape parsing is testable without a Tailscale install.
+ */
+export function readTailnetChatExposure(status: unknown, port: number): { mode: "https" | "http"; url: string } | undefined {
+  if (!status || typeof status !== "object") {
+    return undefined;
+  }
+
+  const web = (status as { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> }).Web;
+  const tcp = (status as { TCP?: Record<string, { HTTP?: boolean; HTTPS?: boolean }> }).TCP;
+
+  if (!web) {
+    return undefined;
+  }
+
+  for (const [hostAndPort, entry] of Object.entries(web)) {
+    const proxiesOurPort = Object.values(entry.Handlers ?? {}).some((handler) =>
+      typeof handler.Proxy === "string" && new RegExp(`(127\\.0\\.0\\.1|localhost|\\[::1\\]):${port}(/|$)`).test(handler.Proxy)
+    );
+
+    if (!proxiesOurPort) {
+      continue;
+    }
+
+    const separator = hostAndPort.lastIndexOf(":");
+    const host = separator > 0 ? hostAndPort.slice(0, separator) : hostAndPort;
+    const servePort = separator > 0 ? hostAndPort.slice(separator + 1) : "443";
+    const serveConfig = tcp?.[servePort];
+
+    if (serveConfig?.HTTPS) {
+      return { mode: "https", url: servePort === "443" ? `https://${host}` : `https://${host}:${servePort}` };
+    }
+
+    if (serveConfig?.HTTP) {
+      return { mode: "http", url: servePort === "80" ? `http://${host}` : `http://${host}:${servePort}` };
+    }
+  }
+
+  return undefined;
+}
+
+async function readTailscaleServeStatus(command: string): Promise<unknown> {
+  const result = await runCommandCapture(command, ["serve", "status", "--json"], 15_000);
+
+  if (!result.ok) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(result.stdout) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reports what is already published, without changing anything. */
+export async function readChatExposure(port: number): Promise<TailnetChatExposure> {
+  const command = await findAvailableCommand(resolveTailscaleCommandCandidatesForSetup());
+
+  if (!command) {
+    return { active: false, mode: "none", port, message: "Tailscale is not available on this computer." };
+  }
+
+  const current = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
+
+  return current
+    ? { active: true, mode: current.mode, url: current.url, port, message: `The chat is reachable in your private network at ${current.url}.` }
+    : { active: false, mode: "none", port, message: "The chat is not published to your private network yet, so only this computer can open it." };
+}
+
+/**
+ * Publishes the loopback chat to the tailnet.
+ *
+ * HTTPS is preferred but needs Serve/HTTPS enabled on the tailnet; when it is
+ * not, the CLI still exits 0 and simply prints an enrolment link, so success is
+ * confirmed by re-reading the serve status rather than by the exit code.
+ * Plain HTTP is the fallback: traffic still travels inside the WireGuard
+ * tunnel, and it needs no admin-console change.
+ */
+export async function exposeChatOnTailnet(
+  port: number,
+  findCommand: (candidates: string[]) => Promise<string | undefined> = findAvailableCommand
+): Promise<TailnetChatExposure> {
+  const command = await findCommand(resolveTailscaleCommandCandidatesForSetup());
+
+  if (!command) {
+    return {
+      active: false,
+      mode: "none",
+      port,
+      message: "Tailscale is not available on this computer, so the chat cannot be published to the private network."
+    };
+  }
+
+  const existing = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
+
+  if (existing) {
+    return { active: true, mode: existing.mode, url: existing.url, port, message: `The chat is reachable in your private network at ${existing.url}.` };
+  }
+
+  for (const args of [
+    ["serve", "--bg", String(port)],
+    ["serve", "--bg", `--http=${port}`, String(port)]
+  ]) {
+    await runCommand(command, args, 45_000);
+    const applied = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
+
+    if (applied) {
+      return { active: true, mode: applied.mode, url: applied.url, port, message: `The chat is reachable in your private network at ${applied.url}.` };
+    }
+  }
+
+  return {
+    active: false,
+    mode: "none",
+    port,
+    message: "Tailscale refused to publish the chat. Open Tailscale, confirm this device is signed in, and try again."
+  };
+}
+
+export async function withdrawChatFromTailnet(port: number): Promise<void> {
+  const command = await findAvailableCommand(resolveTailscaleCommandCandidatesForSetup());
+
+  if (!command) {
+    return;
+  }
+
+  const current = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
+
+  if (!current) {
+    return;
+  }
+
+  await runCommand(command, current.mode === "https" ? ["serve", "--https=443", "off"] : ["serve", `--http=${port}`, "off"], 20_000);
+}
+
+async function runCommandCapture(command: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    let stdout = "";
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+      resolve({ ok, stdout });
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.on("error", () => finish(false));
+    child.on("exit", (code) => finish(code === 0));
+  });
 }
 
 async function runCommand(command: string, args: string[], timeoutMs: number): Promise<{ ok: boolean }> {

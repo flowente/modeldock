@@ -51,8 +51,11 @@ test("shows the foundation app flow", async ({ page }) => {
 
   await page.getByRole("link", { name: /setup guidato|onboarding/i }).click();
   await expect(page.getByRole("heading", { name: /configura il server|server setup/i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /invita un client|invite a client/i })).toBeVisible();
-  await expect(page.getByLabel(/messaggio di configurazione|onboarding message/i)).toContainText(/ti invito a utilizzare il mio server ai|invite you to use my ai server/i);
+  await expect(page.getByRole("heading", { name: /invita un dispositivo|invite a device/i })).toBeVisible();
+  await expect(page.getByLabel(/anteprima dell'invito|invitation preview/i)).toContainText(/ti invito al mio server ai privato|invite you to my private ai server/i);
+  await expect(page.getByRole("button", { name: /crea l'invito|create the invitation/i })).toBeVisible();
+  // The client column must never send the server owner to a download page.
+  await expect(page.getByRole("link", { name: /scarica tailscale|download tailscale/i })).toHaveCount(1);
 
   await page.getByRole("navigation").getByRole("link", { name: /impostazioni|settings/i }).click();
   await expect(page.getByRole("heading", { name: /come appare questo ai server|how this ai server appears/i })).toBeVisible();

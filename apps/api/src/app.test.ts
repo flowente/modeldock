@@ -8,12 +8,56 @@ import {
   buildClientInviteMessage,
   buildClientInviteScript,
   provisionOpenWebUIAdmin,
+  readTailnetChatExposure,
   resolveManagedOpenWebUIBootstrapEnvironment,
   resolveManagedOpenWebUIRuntimeProfile,
   resolveOpenWebUILocalInstall,
   resolveUvxCommandCandidates,
   summarizeOpenWebUIRuntimeFailure
 } from "./app.ts";
+
+describe("tailnet chat publication", () => {
+  const httpStatus = {
+    TCP: { "8080": { HTTP: true } },
+    Web: {
+      "desktop-5ff5muj.taile04c63.ts.net:8080": {
+        Handlers: { "/": { Proxy: "http://127.0.0.1:8080" } }
+      }
+    }
+  };
+
+  it("reads the shareable URL when the chat is served over plain HTTP inside the tailnet", () => {
+    expect(readTailnetChatExposure(httpStatus, 8080)).toEqual({
+      mode: "http",
+      url: "http://desktop-5ff5muj.taile04c63.ts.net:8080"
+    });
+  });
+
+  it("prefers the HTTPS form and drops the default port", () => {
+    const status = {
+      TCP: { "443": { HTTPS: true } },
+      Web: {
+        "desktop-5ff5muj.taile04c63.ts.net:443": {
+          Handlers: { "/": { Proxy: "http://127.0.0.1:8080" } }
+        }
+      }
+    };
+
+    expect(readTailnetChatExposure(status, 8080)).toEqual({
+      mode: "https",
+      url: "https://desktop-5ff5muj.taile04c63.ts.net"
+    });
+  });
+
+  it("ignores a publication that proxies a different local port", () => {
+    expect(readTailnetChatExposure(httpStatus, 3000)).toBeUndefined();
+  });
+
+  it("treats an empty serve configuration as not published", () => {
+    expect(readTailnetChatExposure({}, 8080)).toBeUndefined();
+    expect(readTailnetChatExposure(undefined, 8080)).toBeUndefined();
+  });
+});
 
 describe("Open WebUI runtime diagnostics", () => {
   it("allows only the initial administrator bootstrap while Open WebUI starts", () => {

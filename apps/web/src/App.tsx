@@ -14,6 +14,7 @@ import {
   type ModelPullJob,
   type SystemResources,
   type SystemStatus,
+  type TailnetChatExposure,
   type TailnetDevice,
   type TailnetUserInvite,
   type TailscaleApiConnectionStatus,
@@ -154,6 +155,10 @@ export function App() {
     queryKey: ["tailscale-api-connection"],
     queryFn: () => getJson<TailscaleApiConnectionStatus>("/api/settings/tailscale-api")
   });
+  const chatExposure = useQuery({
+    queryKey: ["tailnet-chat-exposure"],
+    queryFn: () => getJson<TailnetChatExposure>("/api/network/tailscale/chat-exposure")
+  });
   const checks = useQuery({ queryKey: ["diagnostic-checks"], queryFn: () => getJson<DiagnosticCheck[]>("/api/diagnostics/checks") });
   const activePullJob = useQuery({
     enabled: activePullJobId !== null,
@@ -199,6 +204,12 @@ export function App() {
         queryClient.invalidateQueries({ queryKey: ["tailscale-devices"] }),
         queryClient.invalidateQueries({ queryKey: ["system"] })
       ]);
+    }
+  });
+  const publishChatToTailnet = useMutation({
+    mutationFn: () => postJson<TailnetChatExposure>("/api/network/tailscale/chat-exposure"),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tailnet-chat-exposure"] });
     }
   });
   const pullModel = useMutation({
@@ -266,7 +277,10 @@ export function App() {
   const normalizedServerName = settings.serverName.trim() || DEFAULT_SETTINGS.serverName;
   // Never fall back to the dashboard origin: the chat lives on Open WebUI
   // (local :8080 until the private tailnet URL is detected), not on ModelDock.
-  const displayChatUrl = settings.chatUrl.trim() || DEFAULT_LOCAL_CHAT_URL;
+  // Once Tailscale publishes the port, that URL is the one to show everywhere:
+  // it is the only address a guest can open, and it resolves here too.
+  const tailnetChatUrl = chatExposure.data?.active ? chatExposure.data.url : undefined;
+  const displayChatUrl = tailnetChatUrl ?? (settings.chatUrl.trim() || DEFAULT_LOCAL_CHAT_URL);
   const displayServerAccessUrl = settings.serverAccessUrl.trim() || serverUrl;
   const dashboardTitle = settings.language === "it" ? `AI Server di ${normalizedServerName}` : `${normalizedServerName} AI Server`;
   const copy = uiCopy[settings.language];
@@ -298,8 +312,8 @@ export function App() {
   const clientDevices = (devices.data ?? []).filter((device) => device.id !== serverDevice?.id);
   const selectedDevice = clientDevices.find((device) => device.id === selectedDeviceId) ?? clientDevices[0];
   const onboardingShareText = settings.language === "it"
-    ? `Ciao, ti invito al mio server AI privato. Ti invierò una chiave monouso dalla pagina Dispositivi: esegui l'helper ModelDock (oppure "tailscale up --auth-key=LA_TUA_CHIAVE") e sei dentro, senza creare alcun account. Poi apri la chat: ${displayChatUrl}`
-    : `Hi, I invite you to my private AI server. I will send you a one-time key from the Devices page: run the ModelDock helper (or "tailscale up --auth-key=YOUR_KEY") and you are in, with no account to create. Then open the chat: ${displayChatUrl}`;
+    ? `Ciao, ti invito al mio server AI privato. Ti mando un file già pronto da eseguire e una chiave monouso valida un'ora: non devi creare nessun account. Quando la connessione è attiva, apri la chat: ${displayChatUrl}`
+    : `Hi, I invite you to my private AI server. I am sending you a ready-to-run file and a single-use key valid for one hour: there is no account to create. Once you are connected, open the chat: ${displayChatUrl}`;
   const generatedInviteMessage = createdInvite
     ? buildDeviceInviteMessage(createdInvite.key, displayChatUrl, settings.language)
     : "";
@@ -787,55 +801,68 @@ export function App() {
                 </div>
               </section>
 
+              {/*
+                The client path is not a list of steps the server owner can
+                perform: every one of them happens on someone else's device.
+                So this column produces the one artefact that travels - the
+                invitation - instead of buttons that open download pages here.
+              */}
               <section className="onboarding-path" aria-labelledby="client-onboarding-title">
                 <div className="path-heading">
                   <span className="flow-step">Client</span>
                   <div>
-                    <h3 id="client-onboarding-title">{tr("Invite a client", "Invita un client")}</h3>
-                    <p>{tr("Use this for the phone, laptop or tablet that needs to reach the AI chat.", "Segui questi passaggi per il telefono, computer o tablet che deve raggiungere la chat AI.")}</p>
+                    <h3 id="client-onboarding-title">{tr("Invite a device", "Invita un dispositivo")}</h3>
+                    <p>{tr("Everything the other person needs travels in a single message. Nothing on this side opens a page on your computer.", "Tutto ciò che serve all'altra persona viaggia in un solo messaggio. Da questo lato non si apre nessuna pagina sul tuo computer.")}</p>
                   </div>
                 </div>
-                <div className="onboarding-grid">
-                  <OnboardingCard
-                    step="1"
-                    title={tr("Send the download link", "Invia il link per il download")}
-                    description={tr("The client installs Tailscale directly on their own device.", "Il client installa Tailscale direttamente sul proprio dispositivo.")}
-                    ctaLabel={tr("Download Tailscale", "Scarica Tailscale")}
-                    href="https://tailscale.com/download"
-                  />
-                  <OnboardingCard
-                    step="2"
-                    title={tr("Client logs in", "Il client accede")}
-                    description={tr("They sign in with the account or invite you prepared for the server tailnet.", "Accede con l'account o tramite l'invito preparato per la rete Tailscale del server.")}
-                    ctaLabel={tr("Open login", "Apri accesso")}
-                    href="https://login.tailscale.com"
-                  />
-                  <OnboardingCard
-                    step="3"
-                    title={tr("Approve and verify", "Approva e verifica")}
-                    description={tr("Refresh Devices in ModelDock and confirm the new device is visible, online and active.", "Aggiorna Dispositivi in ModelDock e verifica che il nuovo dispositivo sia visibile, connesso e attivo.")}
-                    ctaLabel={tr("Go to Devices", "Vai a Dispositivi")}
-                    href="#devices"
-                  />
-                  <OnboardingCard
-                    step="4"
-                    title={tr("Send the chat link", "Invia il link della chat")}
-                    description={tr("Once the device is active, share the Open WebUI link and the account credentials you created there.", "Quando il dispositivo è attivo, condividi il link Open WebUI e le credenziali dell'account creato.")}
-                    ctaLabel={copy.openChat}
-                    href={displayChatUrl}
-                  />
-                </div>
+
+                <article className="client-invite-card">
+                  <div className="client-invite-status">
+                    <StatusDot on={chatExposure.data?.active === true} label={tr("Private network publication", "Pubblicazione nella rete privata")} />
+                    <div>
+                      <strong>
+                        {chatExposure.data?.active
+                          ? tr("The chat is reachable from your private network", "La chat è raggiungibile dalla tua rete privata")
+                          : tr("The chat is not published yet", "La chat non è ancora pubblicata")}
+                      </strong>
+                      <p>
+                        {chatExposure.data?.active
+                          ? displayChatUrl
+                          : tr("Until it is published, the chat only answers on this computer and an invited device cannot open it.", "Finché non viene pubblicata, la chat risponde solo su questo computer e un dispositivo invitato non può aprirla.")}
+                      </p>
+                    </div>
+                    {chatExposure.data?.active ? null : (
+                      <button className="secondary-button" disabled={publishChatToTailnet.isPending} type="button" onClick={() => publishChatToTailnet.mutate()}>
+                        {publishChatToTailnet.isPending ? tr("Publishing…", "Pubblicazione…") : tr("Publish the chat", "Pubblica la chat")}
+                      </button>
+                    )}
+                  </div>
+
+                  <label className="client-invite-preview">
+                    <span>{tr("Message the person will receive", "Messaggio che riceverà la persona")}</span>
+                    <textarea aria-label={tr("Invitation preview", "Anteprima dell'invito")} readOnly value={onboardingShareText} />
+                  </label>
+
+                  <div className="client-invite-actions">
+                    <button className="primary-compact-button" onClick={openDeviceInvite} type="button">
+                      <Plus aria-hidden="true" /> {tr("Create the invitation", "Crea l'invito")}
+                    </button>
+                    <button className="secondary-button" type="button" onClick={() => void copyOnboardingText()}>
+                      {onboardingClipboard.copied ? copy.copied : tr("Copy text", "Copia testo")}
+                    </button>
+                    <a className="link-button" href="#devices">
+                      {tr("See connected devices", "Vedi i dispositivi collegati")}
+                    </a>
+                  </div>
+
+                  <small className="client-invite-note">
+                    {tr(
+                      "Creating the invitation generates a single-use key valid for one hour and a ready-to-run helper file. The recipient needs no Tailscale account.",
+                      "Creando l'invito ottieni una chiave monouso valida un'ora e un file già pronto da eseguire. Chi lo riceve non deve creare nessun account Tailscale."
+                    )}
+                  </small>
+                </article>
               </section>
-            </div>
-            <div className="share-template">
-              <div>
-                <h3>{tr("Client message", "Messaggio per il client")}</h3>
-                <p>{tr("Ready-to-send text for email, WhatsApp or Slack. Keep real passwords outside this message unless you choose another secure channel.", "Testo pronto da inviare tramite email, WhatsApp o Slack. Non inserire password reali, salvo l'uso di un canale sicuro separato.")}</p>
-              </div>
-              <button className="secondary-button" type="button" onClick={() => void copyOnboardingText()}>
-                {onboardingClipboard.copied ? copy.copied : tr("Copy text", "Copia testo")}
-              </button>
-              <textarea aria-label={tr("Onboarding message", "Messaggio di configurazione")} readOnly value={onboardingShareText} />
             </div>
           </section>
         ) : null}
