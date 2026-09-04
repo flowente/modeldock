@@ -288,6 +288,29 @@ function getTailscaleCliErrorDetails(error: unknown): { accessDenied: boolean; e
   };
 }
 
+function toAuthKeyError(error: unknown, tags: string[]): ModelDockError {
+  if (error instanceof ModelDockError && error.code === "TAILSCALE_API_NOT_CONFIGURED") {
+    return error;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const authRejected = /\b40[013]\b/.test(message);
+  const tagHint =
+    tags.length > 0
+      ? ` Because this key is tagged (${tags.join(", ")}), every tag must also be listed under "tagOwners" in your tailnet ACL.`
+      : "";
+
+  return new ModelDockError({
+    code: "TAILSCALE_AUTH_KEY_FAILED",
+    module: "tailscale-adapter",
+    message: authRejected
+      ? `Tailscale rejected the auth key request. The API token must have the "auth_keys" write scope.${tagHint}`
+      : `Tailscale could not create the auth key: ${message}`,
+    suggestion: "In Tailscale admin → Settings → Keys, check the token has the auth_keys scope; if you use tags, add them to tagOwners in the ACL.",
+    cause: error
+  });
+}
+
 export class TailscaleApiGateway implements TailscaleGateway {
   private readonly apiToken?: string;
   private readonly baseUrl: string;
@@ -391,30 +414,41 @@ export class TailscaleApiGateway implements TailscaleGateway {
   }
 
   public async createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey> {
-    const tags = input.tags && input.tags.length > 0 ? input.tags : [DEFAULT_MODELDOCK_CLIENT_TAG];
+    // Default to an untagged key so an invite works with zero ACL changes: the
+    // device is owned by the API token's user. Tags are opt-in hardening and
+    // require a matching "tagOwners" entry in the tailnet ACL.
+    const tags = input.tags && input.tags.length > 0 ? input.tags : [];
     const reusable = input.reusable ?? false;
-    const ephemeral = input.ephemeral ?? true;
+    // A recurring human guest needs a persistent device: a laptop that goes
+    // offline must not be dropped from the tailnet. Ephemeral is opt-in (CI).
+    const ephemeral = input.ephemeral ?? false;
 
-    const payload = await this.request<TailscaleApiAuthKey>(`/tailnet/${encodeURIComponent(this.tailnet)}/keys`, {
-      body: JSON.stringify({
-        description: input.description ?? "ModelDock client invite",
-        expirySeconds: input.expirySeconds ?? DEFAULT_AUTH_KEY_EXPIRY_SECONDS,
-        capabilities: {
-          devices: {
-            create: {
-              reusable,
-              ephemeral,
-              preauthorized: input.preauthorized ?? true,
-              tags
+    let payload: TailscaleApiAuthKey;
+
+    try {
+      payload = await this.request<TailscaleApiAuthKey>(`/tailnet/${encodeURIComponent(this.tailnet)}/keys`, {
+        body: JSON.stringify({
+          description: input.description ?? "ModelDock client invite",
+          expirySeconds: input.expirySeconds ?? DEFAULT_AUTH_KEY_EXPIRY_SECONDS,
+          capabilities: {
+            devices: {
+              create: {
+                reusable,
+                ephemeral,
+                preauthorized: input.preauthorized ?? true,
+                tags
+              }
             }
           }
-        }
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      });
+    } catch (error) {
+      throw toAuthKeyError(error, tags);
+    }
 
     if (!payload.key) {
       throw new ModelDockError({

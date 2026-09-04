@@ -298,8 +298,8 @@ export function App() {
   const clientDevices = (devices.data ?? []).filter((device) => device.id !== serverDevice?.id);
   const selectedDevice = clientDevices.find((device) => device.id === selectedDeviceId) ?? clientDevices[0];
   const onboardingShareText = settings.language === "it"
-    ? `Ciao, ti invito a utilizzare il mio server AI. Installa Tailscale da https://tailscale.com/download, accetta il link personale che ti invierò e accedi con il tuo account. Poi apri la chat: ${displayChatUrl}`
-    : `Hi, I invite you to use my AI server. Install Tailscale from https://tailscale.com/download, accept the personal link I will send you and sign in with your own account. Then open the chat: ${displayChatUrl}`;
+    ? `Ciao, ti invito al mio server AI privato. Ti invierò una chiave monouso dalla pagina Dispositivi: esegui l'helper ModelDock (oppure "tailscale up --auth-key=LA_TUA_CHIAVE") e sei dentro, senza creare alcun account. Poi apri la chat: ${displayChatUrl}`
+    : `Hi, I invite you to my private AI server. I will send you a one-time key from the Devices page: run the ModelDock helper (or "tailscale up --auth-key=YOUR_KEY") and you are in, with no account to create. Then open the chat: ${displayChatUrl}`;
   const generatedInviteMessage = createdInvite
     ? buildDeviceInviteMessage(createdInvite.key, displayChatUrl, settings.language)
     : "";
@@ -1011,10 +1011,23 @@ export function App() {
                   <StatusDot label={tr("Invitation ready", "Invito pronto")} on={true} />
                   <div>
                     <strong>{tr("Invitation ready", "Invito pronto")}</strong>
-                    <p>{tr("Copy this message and send it by email or chat.", "Copia questo messaggio e invialo tramite email o chat.")}</p>
+                    <p>{tr("Copy this message and attach a helper, then send it by email or chat.", "Copia questo messaggio, allega un helper e invia tramite email o chat.")}</p>
                   </div>
                 </div>
                 <textarea aria-label={tr("Invitation message", "Messaggio di invito")} readOnly value={generatedInviteMessage} />
+                {createdInvite ? (
+                  <div className="invite-helpers">
+                    <span className="invite-security-note">{tr("Attach the helper for the recipient's system (the key is already inside):", "Allega l'helper per il sistema del destinatario (la chiave è già dentro):")}</span>
+                    <div className="invite-helper-buttons">
+                      <button className="secondary-button" type="button" onClick={() => downloadTextFile("join-modeldock.ps1", createdInvite.scripts.windows)}>
+                        {tr("Download Windows helper", "Scarica helper Windows")}
+                      </button>
+                      <button className="secondary-button" type="button" onClick={() => downloadTextFile("join-modeldock.command", createdInvite.scripts.macos)}>
+                        {tr("Download macOS helper", "Scarica helper macOS")}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="modal-actions">
                   <button className="secondary-button" onClick={() => {
                     setCreatedInvite(null);
@@ -1042,6 +1055,19 @@ interface AuthKeyInvite {
   expiresAt?: string;
   chatUrl: string | null;
   clientMessage: string;
+  scripts: { windows: string; macos: string };
+}
+
+function downloadTextFile(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function buildDeviceInviteMessage(authKey: string, chatUrl: string, language: LanguagePreference): string {

@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 import {
   buildApp,
   buildClientInviteMessage,
+  buildClientInviteScript,
   provisionOpenWebUIAdmin,
   resolveManagedOpenWebUIBootstrapEnvironment,
   resolveManagedOpenWebUIRuntimeProfile,
@@ -782,10 +783,21 @@ describe("Client invite flow", () => {
   it("builds a ready-to-send invite message with the key and chat address", () => {
     const message = buildClientInviteMessage("tskey-auth-abc", "https://server.taildomain.ts.net");
 
-    expect(message).toContain("tskey-auth-abc");
     expect(message).toContain("tailscale up --auth-key=tskey-auth-abc");
     expect(message).toContain("https://server.taildomain.ts.net");
     expect(message).toContain("single-use");
+    // The helper is attached, not promised as a mystery download.
+    expect(message).toContain("attached");
+  });
+
+  it("embeds the key inside downloadable per-OS helper scripts", () => {
+    const windows = buildClientInviteScript("windows", "tskey-auth-abc", "https://server.ts.net");
+    const macos = buildClientInviteScript("macos", "tskey-auth-abc", "https://server.ts.net");
+
+    expect(windows).toContain("$AuthKey = 'tskey-auth-abc'");
+    expect(windows).toContain("tailscale.exe");
+    expect(macos).toContain("AUTH_KEY='tskey-auth-abc'");
+    expect(macos.startsWith("#!/bin/bash")).toBe(true);
   });
 
   it("generates an auth-key invite through the API in fake mode", async () => {
@@ -801,9 +813,11 @@ describe("Client invite flow", () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.key).toBe("tskey-auth-modeldock-test");
-      expect(body.ephemeral).toBe(true);
+      expect(body.ephemeral).toBe(false);
       expect(body.clientMessage).toContain("tskey-auth-modeldock-test");
       expect(body.clientMessage).toContain("https://server.taildomain.ts.net");
+      expect(body.scripts.windows).toContain("tskey-auth-modeldock-test");
+      expect(body.scripts.macos).toContain("tskey-auth-modeldock-test");
     } finally {
       await app.close();
     }

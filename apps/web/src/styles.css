@@ -2597,3 +2597,16 @@ code {
 .welcome-exit-link:hover {
   background: rgba(127, 127, 127, 0.24);
 }
+
+.invite-helpers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.invite-helper-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

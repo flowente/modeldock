@@ -118,7 +118,7 @@ describe("Tailscale API gateway", () => {
     });
   });
 
-  it("generates a pre-authorized, tagged, ephemeral auth key for a client invite", async () => {
+  it("generates an untagged, persistent, pre-authorized auth key by default (zero ACL config)", async () => {
     const gateway = new TailscaleApiGateway({
       apiToken: "tskey-api-test",
       clock,
@@ -132,9 +132,9 @@ describe("Tailscale API gateway", () => {
             devices: {
               create: {
                 reusable: false,
-                ephemeral: true,
+                ephemeral: false,
                 preauthorized: true,
-                tags: ["tag:modeldock-client"]
+                tags: []
               }
             }
           }
@@ -144,7 +144,7 @@ describe("Tailscale API gateway", () => {
           id: "key-1",
           key: "tskey-auth-secret",
           expires: "2026-09-03T01:00:00.000Z",
-          capabilities: { devices: { create: { reusable: false, ephemeral: true, tags: ["tag:modeldock-client"] } } }
+          capabilities: { devices: { create: { reusable: false, ephemeral: false, tags: [] } } }
         });
       }
     });
@@ -153,9 +153,25 @@ describe("Tailscale API gateway", () => {
       id: "key-1",
       key: "tskey-auth-secret",
       reusable: false,
-      ephemeral: true,
-      tags: ["tag:modeldock-client"],
+      ephemeral: false,
+      tags: [],
       expiresAt: "2026-09-03T01:00:00.000Z"
+    });
+  });
+
+  it("explains the auth_keys scope and tagOwners requirement when Tailscale rejects the key", async () => {
+    const gateway = new TailscaleApiGateway({
+      apiToken: "tskey-api-test",
+      clock,
+      fetchImpl: async () => new Response("forbidden", { status: 403 })
+    });
+
+    await expect(gateway.createAuthKey({ tags: ["tag:modeldock-client"] })).rejects.toMatchObject({
+      code: "TAILSCALE_AUTH_KEY_FAILED",
+      message: expect.stringContaining("auth_keys")
+    });
+    await expect(gateway.createAuthKey({ tags: ["tag:modeldock-client"] })).rejects.toMatchObject({
+      message: expect.stringContaining("tagOwners")
     });
   });
 });

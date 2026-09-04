@@ -139,18 +139,64 @@ export function buildClientInviteMessage(authKey: string, chatUrl?: string): str
   return [
     "You have been invited to a private ModelDock AI server.",
     "",
-    "1. Download and run the ModelDock join helper for your system.",
-    "2. When asked, paste this one-time key (valid for 1 hour):",
+    "1. Run the ModelDock join helper attached to this message",
+    "   (join-modeldock.ps1 on Windows, join-modeldock.command on macOS).",
+    "   It installs Tailscale if needed and connects you automatically.",
     "",
-    `   ${authKey}`,
-    "",
-    "Or, if you already have Tailscale installed, just run:",
+    "   If you already have Tailscale installed, you can instead run:",
     "",
     `   tailscale up --auth-key=${authKey}`,
     "",
-    `Then open the chat: ${chatLine}`,
+    `2. Open the chat: ${chatLine}`,
     "",
-    "This key is single-use and expires in 1 hour. Do not share it."
+    "No account is required. The key is single-use and expires in 1 hour.",
+    "Do not share it."
+  ].join("\n");
+}
+
+export type InviteScriptOs = "windows" | "macos";
+
+/**
+ * Builds a self-contained join helper with the one-time key already embedded,
+ * so the recipient just runs the file - no copy/paste, no separate download.
+ */
+export function buildClientInviteScript(os: InviteScriptOs, authKey: string, chatUrl?: string): string {
+  const chat = chatUrl && chatUrl.trim() ? chatUrl.trim() : "";
+
+  if (os === "windows") {
+    return [
+      "# ModelDock join helper (Windows) - generated invite, key embedded.",
+      "# The key is single-use and expires in 1 hour. Do not share this file.",
+      "$ErrorActionPreference = 'Stop'",
+      `$AuthKey = '${authKey}'`,
+      `$ChatUrl = '${chat}'`,
+      "$ts = 'C:\\Program Files\\Tailscale\\tailscale.exe'",
+      "if (-not (Test-Path $ts)) {",
+      "  Write-Host 'Installing Tailscale...'",
+      "  $installer = Join-Path $env:TEMP 'tailscale-setup.exe'",
+      "  Invoke-WebRequest -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe' -OutFile $installer",
+      "  Start-Process -FilePath $installer -ArgumentList '/quiet' -Wait",
+      "}",
+      "& $ts up --authkey $AuthKey --hostname $env:COMPUTERNAME --accept-routes",
+      "if ($ChatUrl -ne '') { Start-Process $ChatUrl }",
+      "Write-Host 'Done. You are on the private network.'"
+    ].join("\r\n");
+  }
+
+  return [
+    "#!/bin/bash",
+    "# ModelDock join helper (macOS) - generated invite, key embedded.",
+    "# The key is single-use and expires in 1 hour. Do not share this file.",
+    "set -euo pipefail",
+    `AUTH_KEY='${authKey}'`,
+    `CHAT_URL='${chat}'`,
+    'if ! command -v tailscale >/dev/null 2>&1 && [ ! -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then',
+    '  if command -v brew >/dev/null 2>&1; then brew install --cask tailscale; else open "https://tailscale.com/download/mac"; echo "Install Tailscale, then re-run this file."; exit 1; fi',
+    "fi",
+    'TS=tailscale; command -v tailscale >/dev/null 2>&1 || TS="/Applications/Tailscale.app/Contents/MacOS/Tailscale"',
+    'sudo "$TS" up --authkey "$AUTH_KEY" --hostname "$(hostname -s)" --accept-routes',
+    'if [ -n "$CHAT_URL" ]; then open "$CHAT_URL"; fi',
+    'echo "Done. You are on the private network."'
   ].join("\n");
 }
 
@@ -963,7 +1009,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const authKey = await getTailscaleManagementGateway().createAuthKey({
       description: label,
       reusable: false,
-      ephemeral: true,
+      // Persistent device (not ephemeral) so a recurring guest's laptop stays in
+      // the tailnet after it goes offline; the key itself is still single-use.
+      ephemeral: false,
       preauthorized: true,
       expirySeconds: 3600
     });
@@ -980,8 +1028,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     const chatUrl = request.body.chatUrl?.trim();
     const clientMessage = buildClientInviteMessage(authKey.key, chatUrl);
+    const scripts = {
+      windows: buildClientInviteScript("windows", authKey.key, chatUrl),
+      macos: buildClientInviteScript("macos", authKey.key, chatUrl)
+    };
 
-    return { ...authKey, chatUrl: chatUrl ?? null, clientMessage };
+    return { ...authKey, chatUrl: chatUrl ?? null, clientMessage, scripts };
   });
   app.put<{ Params: { deviceId: string }; Body: { authorized?: boolean } }>("/api/network/tailscale/devices/:deviceId", async (request) => {
     if (typeof request.body.authorized !== "boolean") {

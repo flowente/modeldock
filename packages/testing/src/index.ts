@@ -299,8 +299,8 @@ export class FakeTailscaleGateway implements TailscaleGateway {
       id: "authkey-1",
       key: "tskey-auth-modeldock-test",
       reusable: input.reusable ?? false,
-      ephemeral: input.ephemeral ?? true,
-      tags: input.tags && input.tags.length > 0 ? input.tags : ["tag:modeldock-client"],
+      ephemeral: input.ephemeral ?? false,
+      tags: input.tags ?? [],
       expiresAt: "2026-08-29T01:00:00.000Z"
     };
   }
