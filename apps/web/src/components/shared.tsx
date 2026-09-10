@@ -100,8 +100,16 @@ export function Warnings({ warnings, language = "en" }: { warnings: string[]; la
   );
 }
 
-function translateWarning(warning: string): string {
+export function translateWarning(warning: string): string {
   return warning
+    .replace("Backend is running", "Il backend è in funzione")
+    .replace("Audit storage is writable", "Il registro delle attività è scrivibile")
+    .replace("Tailscale is connected", "Tailscale è connesso")
+    .replace("fetch failed", "nessuna risposta dal servizio")
+    .replace(/^(\d+) model\(s\) available$/, "$1 modelli disponibili")
+    .replace(/^(\d+) device\(s\) visible$/, "$1 dispositivi visibili")
+    .replace("No local models found", "Nessun modello locale trovato")
+    .replace("No Tailscale devices found", "Nessun dispositivo Tailscale trovato")
     .replace("Ollama is not reachable", "Ollama non è raggiungibile")
     .replace("Ollama is reachable", "Ollama è raggiungibile")
     .replace("Tailscale is installed but not logged in", "Tailscale è installato ma non è stato effettuato l'accesso")
@@ -117,7 +125,7 @@ export function DiagnosticResultRow({ result }: { result: DiagnosticCheckResult 
   const hasProblem = result.status !== "pass";
 
   return (
-    <article className="diagnostic-row">
+    <article className={`diagnostic-row ${hasProblem ? `is-${result.status}` : ""}`}>
       <StatusDot on={!hasProblem} label={`${result.label} ${hasProblem ? result.status : "ok"}`} />
       <div className="diagnostic-copy">
         <strong>{result.label}</strong>

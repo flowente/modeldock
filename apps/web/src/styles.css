@@ -2685,3 +2685,20 @@ code {
     grid-column: 1 / -1;
   }
 }
+
+/* A failed check must read as failed: grey says "unknown", not "broken". */
+.diagnostic-row.is-fail .status-dot,
+.diagnostic-row.is-warn .status-dot {
+  background: #c0392b;
+  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.16);
+}
+
+.diagnostic-row.is-warn .status-dot {
+  background: #b8860b;
+  box-shadow: 0 0 0 3px rgba(184, 134, 11, 0.16);
+}
+
+.diagnostic-row.is-fail .diagnostic-copy span,
+.diagnostic-row.is-warn .diagnostic-copy span {
+  opacity: 1;
+}

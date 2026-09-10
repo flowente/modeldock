@@ -6,7 +6,7 @@ import {
   getJson,
   postJson,
   putJson,
-  type DiagnosticCheck,
+  type DiagnosticCheckResult,
   type AiServerPowerStatus,
   type Model,
   type ModelAccessMatrix,
@@ -23,7 +23,7 @@ import {
 import { DeviceTopology, NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
 import { ModelAccessRow, PullProgress } from "./components/models.js";
 import { OnboardingCard } from "./components/onboarding.js";
-import { DetailItem, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
+import { DetailItem, DiagnosticResultRow, ErrorState, PanelHeader, StatusDot, StatusTile, translateWarning, Warnings } from "./components/shared.js";
 import { UsageAccessRow } from "./components/usage.js";
 import { resolveVisibleChatUrl, WelcomeExperience, withPort } from "./components/welcome.js";
 import { useAppSettings } from "./hooks/use-app-settings.js";
@@ -159,7 +159,14 @@ export function App() {
     queryKey: ["tailnet-chat-exposure"],
     queryFn: () => getJson<TailnetChatExposure>("/api/network/tailscale/chat-exposure")
   });
-  const checks = useQuery({ queryKey: ["diagnostic-checks"], queryFn: () => getJson<DiagnosticCheck[]>("/api/diagnostics/checks") });
+  // Run the checks for real instead of listing their names: this page exists to
+  // say what is broken, and a hard-coded green dot cannot. Only while the page
+  // is open, because every run appends an audit event.
+  const checks = useQuery({
+    enabled: activeView === "diagnostics",
+    queryKey: ["diagnostic-results"],
+    queryFn: () => postJson<DiagnosticCheckResult[]>("/api/diagnostics/run-all")
+  });
   const activePullJob = useQuery({
     enabled: activePullJobId !== null,
     queryKey: ["model-pull-job", activePullJobId],
@@ -955,15 +962,35 @@ export function App() {
         ) : null}
 
         {activeView === "diagnostics" ? <section id="diagnostics" className="panel">
-          <PanelHeader title={copy.diagnostics} subtitle={tr("System checks and technical details.", "Controlli del sistema e dettagli tecnici.")} />
+          <PanelHeader
+            title={copy.diagnostics}
+            action={
+              <button className="panel-action-button" disabled={checks.isFetching} type="button" onClick={() => void checks.refetch()}>
+                {checks.isFetching ? <span className="text-spinner" aria-hidden="true">◐</span> : null}
+                {checks.isFetching ? tr("Running…", "Controllo…") : tr("Run checks", "Esegui i controlli")}
+              </button>
+            }
+          />
+          {checks.isError ? (
+            <ErrorState message={tr("The checks could not be run. Is the ModelDock backend running?", "Non è stato possibile eseguire i controlli. Il backend di ModelDock è acceso?")} />
+          ) : null}
           <div className="check-list">
-            {(checks.data ?? []).map((check) => (
-              <div className="check-row" key={check.id}>
-                <StatusDot on={true} label={tr(`${check.label} ready`, `${translateDiagnosticLabel(check.label)} pronto`)} />
-                <span>{settings.language === "it" ? translateDiagnosticLabel(check.label) : check.label}</span>
-              </div>
+            {(checks.data ?? []).map((result) => (
+              <DiagnosticResultRow
+                key={result.id}
+                result={settings.language === "it" ? { ...result, label: translateDiagnosticLabel(result.label), message: translateWarning(result.message) } : result}
+              />
             ))}
+            {!checks.isFetching && !checks.isError && (checks.data ?? []).length === 0 ? (
+              <p className="muted-copy">{tr("No check has run yet.", "Nessun controllo è ancora stato eseguito.")}</p>
+            ) : null}
           </div>
+          <p className="panel-note">
+            {tr(
+              "Each line is the result of a check run just now, not a stored value. A failing line names the service to look at.",
+              "Ogni riga è l'esito di un controllo eseguito adesso, non un valore memorizzato. Una riga in errore indica il servizio da guardare."
+            )}
+          </p>
         </section> : null}
 
       </section>
@@ -1182,10 +1209,13 @@ function translateGroupDescription(description: string | undefined, language: La
 }
 
 function translateDiagnosticLabel(label: string): string {
+  // These keys must match the labels in packages/diagnostics; the previous map
+  // guessed three of them and left half the page in English.
   const labels: Record<string, string> = {
+    "Audit storage": "Registro delle attività",
     "Backend health": "Stato del backend",
-    "Model inventory": "Inventario dei modelli",
-    "Storage health": "Stato dell'archiviazione",
+    "Ollama connection": "Connessione a Ollama",
+    "Ollama model inventory": "Modelli disponibili in Ollama",
     "Tailscale devices": "Dispositivi Tailscale",
     "Tailscale status": "Stato di Tailscale"
   };
