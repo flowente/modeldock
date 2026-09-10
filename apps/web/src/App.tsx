@@ -6,7 +6,7 @@ import {
   getJson,
   postJson,
   putJson,
-  type DiagnosticCheck,
+  type DiagnosticCheckResult,
   type AiServerPowerStatus,
   type Model,
   type ModelAccessMatrix,
@@ -14,6 +14,7 @@ import {
   type ModelPullJob,
   type SystemResources,
   type SystemStatus,
+  type TailnetChatExposure,
   type TailnetDevice,
   type TailnetUserInvite,
   type TailscaleApiConnectionStatus,
@@ -22,7 +23,7 @@ import {
 import { DeviceTopology, NetworkDeviceCard, TailscaleSummary } from "./components/devices.js";
 import { ModelAccessRow, PullProgress } from "./components/models.js";
 import { OnboardingCard } from "./components/onboarding.js";
-import { DetailItem, ErrorState, PanelHeader, StatusDot, StatusTile, Warnings } from "./components/shared.js";
+import { DetailItem, DiagnosticResultRow, ErrorState, PanelHeader, StatusDot, StatusTile, translateWarning, Warnings } from "./components/shared.js";
 import { UsageAccessRow } from "./components/usage.js";
 import { resolveVisibleChatUrl, WelcomeExperience, withPort } from "./components/welcome.js";
 import { useAppSettings } from "./hooks/use-app-settings.js";
@@ -32,6 +33,8 @@ import { formatHealthStatus, formatHealthSummary } from "./lib/format.js";
 import { getStringHealthDetail } from "./lib/health.js";
 import { getPullFeedback, isPullJobActive, isPullJobTerminal } from "./lib/pull-jobs.js";
 import { DEFAULT_SETTINGS, type BackgroundPreference, type LanguagePreference, type ModelRuntimeAction, type UpdateModelAccessInput } from "./types.js";
+
+const DEFAULT_LOCAL_CHAT_URL = "http://127.0.0.1:8080";
 
 const uiCopy = {
   en: {
@@ -121,8 +124,8 @@ const backgroundLabels: Record<BackgroundPreference, { en: string; it: string }>
 
 export function App() {
   const queryClient = useQueryClient();
-  const activeView = useHashRoute();
   const { settings, updateSettings } = useAppSettings();
+  const activeView = useHashRoute(settings.setupComplete);
   const tr = (english: string, italian: string) => settings.language === "it" ? italian : english;
   const serverUrlClipboard = useClipboard();
   const chatUrlClipboard = useClipboard();
@@ -136,7 +139,7 @@ export function App() {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [tailscaleApiToken, setTailscaleApiToken] = useState("");
-  const [createdInvite, setCreatedInvite] = useState<TailnetUserInvite | null>(null);
+  const [createdInvite, setCreatedInvite] = useState<AuthKeyInvite | null>(null);
   const serverUrl = typeof window === "undefined" ? "http://127.0.0.1:4173" : window.location.origin;
   const system = useQuery({ queryKey: ["system"], queryFn: () => getJson<SystemStatus>("/api/system/status") });
   const serverPower = useQuery({
@@ -152,7 +155,18 @@ export function App() {
     queryKey: ["tailscale-api-connection"],
     queryFn: () => getJson<TailscaleApiConnectionStatus>("/api/settings/tailscale-api")
   });
-  const checks = useQuery({ queryKey: ["diagnostic-checks"], queryFn: () => getJson<DiagnosticCheck[]>("/api/diagnostics/checks") });
+  const chatExposure = useQuery({
+    queryKey: ["tailnet-chat-exposure"],
+    queryFn: () => getJson<TailnetChatExposure>("/api/network/tailscale/chat-exposure")
+  });
+  // Run the checks for real instead of listing their names: this page exists to
+  // say what is broken, and a hard-coded green dot cannot. Only while the page
+  // is open, because every run appends an audit event.
+  const checks = useQuery({
+    enabled: activeView === "diagnostics",
+    queryKey: ["diagnostic-results"],
+    queryFn: () => postJson<DiagnosticCheckResult[]>("/api/diagnostics/run-all")
+  });
   const activePullJob = useQuery({
     enabled: activePullJobId !== null,
     queryKey: ["model-pull-job", activePullJobId],
@@ -184,7 +198,8 @@ export function App() {
     }
   });
   const createDeviceInvite = useMutation({
-    mutationFn: (email: string) => postJson<TailnetUserInvite>("/api/network/tailscale/invites", { email: email.trim() || undefined }),
+    mutationFn: (_email: string) =>
+      postJson<AuthKeyInvite>("/api/network/tailscale/auth-keys", { chatUrl: displayChatUrl || undefined }),
     onSuccess: (invite) => setCreatedInvite(invite)
   });
   const connectTailscaleApi = useMutation({
@@ -196,6 +211,12 @@ export function App() {
         queryClient.invalidateQueries({ queryKey: ["tailscale-devices"] }),
         queryClient.invalidateQueries({ queryKey: ["system"] })
       ]);
+    }
+  });
+  const publishChatToTailnet = useMutation({
+    mutationFn: () => postJson<TailnetChatExposure>("/api/network/tailscale/chat-exposure"),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tailnet-chat-exposure"] });
     }
   });
   const pullModel = useMutation({
@@ -261,7 +282,12 @@ export function App() {
     language: settings.language
   });
   const normalizedServerName = settings.serverName.trim() || DEFAULT_SETTINGS.serverName;
-  const displayChatUrl = settings.chatUrl.trim() || serverUrl;
+  // Never fall back to the dashboard origin: the chat lives on Open WebUI
+  // (local :8080 until the private tailnet URL is detected), not on ModelDock.
+  // Once Tailscale publishes the port, that URL is the one to show everywhere:
+  // it is the only address a guest can open, and it resolves here too.
+  const tailnetChatUrl = chatExposure.data?.active ? chatExposure.data.url : undefined;
+  const displayChatUrl = tailnetChatUrl ?? (settings.chatUrl.trim() || DEFAULT_LOCAL_CHAT_URL);
   const displayServerAccessUrl = settings.serverAccessUrl.trim() || serverUrl;
   const dashboardTitle = settings.language === "it" ? `AI Server di ${normalizedServerName}` : `${normalizedServerName} AI Server`;
   const copy = uiCopy[settings.language];
@@ -293,10 +319,10 @@ export function App() {
   const clientDevices = (devices.data ?? []).filter((device) => device.id !== serverDevice?.id);
   const selectedDevice = clientDevices.find((device) => device.id === selectedDeviceId) ?? clientDevices[0];
   const onboardingShareText = settings.language === "it"
-    ? `Ciao, ti invito a utilizzare il mio server AI. Installa Tailscale da https://tailscale.com/download, accetta il link personale che ti invierò e accedi con il tuo account. Poi apri la chat: ${displayChatUrl}`
-    : `Hi, I invite you to use my AI server. Install Tailscale from https://tailscale.com/download, accept the personal link I will send you and sign in with your own account. Then open the chat: ${displayChatUrl}`;
+    ? `Ciao, ti invito al mio server AI privato. Ti mando un file già pronto da eseguire e una chiave monouso valida un'ora: non devi creare nessun account. Quando la connessione è attiva, apri la chat: ${displayChatUrl}`
+    : `Hi, I invite you to my private AI server. I am sending you a ready-to-run file and a single-use key valid for one hour: there is no account to create. Once you are connected, open the chat: ${displayChatUrl}`;
   const generatedInviteMessage = createdInvite
-    ? buildDeviceInviteMessage(createdInvite, displayChatUrl, settings.language)
+    ? buildDeviceInviteMessage(createdInvite.key, displayChatUrl, settings.language)
     : "";
 
   async function refreshModelRuntimeState() {
@@ -325,7 +351,9 @@ export function App() {
   }, [pullJob?.id, pullJob?.model, pullJob?.status]);
 
   useEffect(() => {
-    if (!settings.setupComplete || !settings.chatUrl.trim()) {
+    // Run detection precisely when the shareable URL is missing or still points
+    // at this machine - that is exactly when we need the private tailnet URL.
+    if (!settings.setupComplete) {
       return undefined;
     }
 
@@ -410,16 +438,23 @@ export function App() {
 
   if (activeView === "welcome") {
     return (
-      <WelcomeExperience
-        activeStep={welcomeStep}
-        chatUrl={displayChatUrl}
-        copied={onboardingClipboard.copied}
-        copyInvite={() => void copyOnboardingText()}
-        inviteMessage={onboardingShareText}
-        settings={settings}
-        setActiveStep={setWelcomeStep}
-        updateSettings={updateSettings}
-      />
+      <>
+        {settings.setupComplete ? (
+          <a className="welcome-exit-link" href="#home">
+            {tr("Go to dashboard", "Vai alla dashboard")}
+          </a>
+        ) : null}
+        <WelcomeExperience
+          activeStep={welcomeStep}
+          chatUrl={displayChatUrl}
+          copied={onboardingClipboard.copied}
+          copyInvite={() => void copyOnboardingText()}
+          inviteMessage={onboardingShareText}
+          settings={settings}
+          setActiveStep={setWelcomeStep}
+          updateSettings={updateSettings}
+        />
+      </>
     );
   }
 
@@ -773,55 +808,68 @@ export function App() {
                 </div>
               </section>
 
+              {/*
+                The client path is not a list of steps the server owner can
+                perform: every one of them happens on someone else's device.
+                So this column produces the one artefact that travels - the
+                invitation - instead of buttons that open download pages here.
+              */}
               <section className="onboarding-path" aria-labelledby="client-onboarding-title">
                 <div className="path-heading">
                   <span className="flow-step">Client</span>
                   <div>
-                    <h3 id="client-onboarding-title">{tr("Invite a client", "Invita un client")}</h3>
-                    <p>{tr("Use this for the phone, laptop or tablet that needs to reach the AI chat.", "Segui questi passaggi per il telefono, computer o tablet che deve raggiungere la chat AI.")}</p>
+                    <h3 id="client-onboarding-title">{tr("Invite a device", "Invita un dispositivo")}</h3>
+                    <p>{tr("Everything the other person needs travels in a single message. Nothing on this side opens a page on your computer.", "Tutto ciò che serve all'altra persona viaggia in un solo messaggio. Da questo lato non si apre nessuna pagina sul tuo computer.")}</p>
                   </div>
                 </div>
-                <div className="onboarding-grid">
-                  <OnboardingCard
-                    step="1"
-                    title={tr("Send the download link", "Invia il link per il download")}
-                    description={tr("The client installs Tailscale directly on their own device.", "Il client installa Tailscale direttamente sul proprio dispositivo.")}
-                    ctaLabel={tr("Download Tailscale", "Scarica Tailscale")}
-                    href="https://tailscale.com/download"
-                  />
-                  <OnboardingCard
-                    step="2"
-                    title={tr("Client logs in", "Il client accede")}
-                    description={tr("They sign in with the account or invite you prepared for the server tailnet.", "Accede con l'account o tramite l'invito preparato per la rete Tailscale del server.")}
-                    ctaLabel={tr("Open login", "Apri accesso")}
-                    href="https://login.tailscale.com"
-                  />
-                  <OnboardingCard
-                    step="3"
-                    title={tr("Approve and verify", "Approva e verifica")}
-                    description={tr("Refresh Devices in ModelDock and confirm the new device is visible, online and active.", "Aggiorna Dispositivi in ModelDock e verifica che il nuovo dispositivo sia visibile, connesso e attivo.")}
-                    ctaLabel={tr("Go to Devices", "Vai a Dispositivi")}
-                    href="#devices"
-                  />
-                  <OnboardingCard
-                    step="4"
-                    title={tr("Send the chat link", "Invia il link della chat")}
-                    description={tr("Once the device is active, share the Open WebUI link and the account credentials you created there.", "Quando il dispositivo è attivo, condividi il link Open WebUI e le credenziali dell'account creato.")}
-                    ctaLabel={copy.openChat}
-                    href={displayChatUrl}
-                  />
-                </div>
+
+                <article className="client-invite-card">
+                  <div className="client-invite-status">
+                    <StatusDot on={chatExposure.data?.active === true} label={tr("Private network publication", "Pubblicazione nella rete privata")} />
+                    <div>
+                      <strong>
+                        {chatExposure.data?.active
+                          ? tr("The chat is reachable from your private network", "La chat è raggiungibile dalla tua rete privata")
+                          : tr("The chat is not published yet", "La chat non è ancora pubblicata")}
+                      </strong>
+                      <p>
+                        {chatExposure.data?.active
+                          ? displayChatUrl
+                          : tr("Until it is published, the chat only answers on this computer and an invited device cannot open it.", "Finché non viene pubblicata, la chat risponde solo su questo computer e un dispositivo invitato non può aprirla.")}
+                      </p>
+                    </div>
+                    {chatExposure.data?.active ? null : (
+                      <button className="secondary-button" disabled={publishChatToTailnet.isPending} type="button" onClick={() => publishChatToTailnet.mutate()}>
+                        {publishChatToTailnet.isPending ? tr("Publishing…", "Pubblicazione…") : tr("Publish the chat", "Pubblica la chat")}
+                      </button>
+                    )}
+                  </div>
+
+                  <label className="client-invite-preview">
+                    <span>{tr("Message the person will receive", "Messaggio che riceverà la persona")}</span>
+                    <textarea aria-label={tr("Invitation preview", "Anteprima dell'invito")} readOnly value={onboardingShareText} />
+                  </label>
+
+                  <div className="client-invite-actions">
+                    <button className="primary-compact-button" onClick={openDeviceInvite} type="button">
+                      <Plus aria-hidden="true" /> {tr("Create the invitation", "Crea l'invito")}
+                    </button>
+                    <button className="secondary-button" type="button" onClick={() => void copyOnboardingText()}>
+                      {onboardingClipboard.copied ? copy.copied : tr("Copy text", "Copia testo")}
+                    </button>
+                    <a className="link-button" href="#devices">
+                      {tr("See connected devices", "Vedi i dispositivi collegati")}
+                    </a>
+                  </div>
+
+                  <small className="client-invite-note">
+                    {tr(
+                      "Creating the invitation generates a single-use key valid for one hour and a ready-to-run helper file. The recipient needs no Tailscale account.",
+                      "Creando l'invito ottieni una chiave monouso valida un'ora e un file già pronto da eseguire. Chi lo riceve non deve creare nessun account Tailscale."
+                    )}
+                  </small>
+                </article>
               </section>
-            </div>
-            <div className="share-template">
-              <div>
-                <h3>{tr("Client message", "Messaggio per il client")}</h3>
-                <p>{tr("Ready-to-send text for email, WhatsApp or Slack. Keep real passwords outside this message unless you choose another secure channel.", "Testo pronto da inviare tramite email, WhatsApp o Slack. Non inserire password reali, salvo l'uso di un canale sicuro separato.")}</p>
-              </div>
-              <button className="secondary-button" type="button" onClick={() => void copyOnboardingText()}>
-                {onboardingClipboard.copied ? copy.copied : tr("Copy text", "Copia testo")}
-              </button>
-              <textarea aria-label={tr("Onboarding message", "Messaggio di configurazione")} readOnly value={onboardingShareText} />
             </div>
           </section>
         ) : null}
@@ -914,15 +962,35 @@ export function App() {
         ) : null}
 
         {activeView === "diagnostics" ? <section id="diagnostics" className="panel">
-          <PanelHeader title={copy.diagnostics} subtitle={tr("System checks and technical details.", "Controlli del sistema e dettagli tecnici.")} />
+          <PanelHeader
+            title={copy.diagnostics}
+            action={
+              <button className="panel-action-button" disabled={checks.isFetching} type="button" onClick={() => void checks.refetch()}>
+                {checks.isFetching ? <span className="text-spinner" aria-hidden="true">◐</span> : null}
+                {checks.isFetching ? tr("Running…", "Controllo…") : tr("Run checks", "Esegui i controlli")}
+              </button>
+            }
+          />
+          {checks.isError ? (
+            <ErrorState message={tr("The checks could not be run. Is the ModelDock backend running?", "Non è stato possibile eseguire i controlli. Il backend di ModelDock è acceso?")} />
+          ) : null}
           <div className="check-list">
-            {(checks.data ?? []).map((check) => (
-              <div className="check-row" key={check.id}>
-                <StatusDot on={true} label={tr(`${check.label} ready`, `${translateDiagnosticLabel(check.label)} pronto`)} />
-                <span>{settings.language === "it" ? translateDiagnosticLabel(check.label) : check.label}</span>
-              </div>
+            {(checks.data ?? []).map((result) => (
+              <DiagnosticResultRow
+                key={result.id}
+                result={settings.language === "it" ? { ...result, label: translateDiagnosticLabel(result.label), message: translateWarning(result.message) } : result}
+              />
             ))}
+            {!checks.isFetching && !checks.isError && (checks.data ?? []).length === 0 ? (
+              <p className="muted-copy">{tr("No check has run yet.", "Nessun controllo è ancora stato eseguito.")}</p>
+            ) : null}
           </div>
+          <p className="panel-note">
+            {tr(
+              "Each line is the result of a check run just now, not a stored value. A failing line names the service to look at.",
+              "Ogni riga è l'esito di un controllo eseguito adesso, non un valore memorizzato. Una riga in errore indica il servizio da guardare."
+            )}
+          </p>
         </section> : null}
 
       </section>
@@ -935,7 +1003,7 @@ export function App() {
               <div>
                 <span className="flow-step">Tailscale</span>
                 <h2 id="device-invite-title">{tr("Invite a device", "Invita un dispositivo")}</h2>
-                <p>{tr("Create a personal, one-time link. The recipient signs in with their own account; ModelDock never shares your Tailscale credentials.", "Crea un link personale e monouso. La persona accederà con il proprio account: ModelDock non condivide mai le tue credenziali Tailscale.")}</p>
+                <p>{tr("Create a one-time key. The recipient joins your private network with a single command — no account, no browser sign-in.", "Crea una chiave monouso. La persona entra nella tua rete privata con un solo comando: nessun account, nessun accesso via browser.")}</p>
               </div>
               <button aria-label={tr("Close invitation", "Chiudi invito")} className="modal-close-button" onClick={() => setIsInviteOpen(false)} type="button">
                 <X aria-hidden="true" />
@@ -978,19 +1046,9 @@ export function App() {
             ) : !createdInvite ? (
               <form className="invite-form" onSubmit={(event) => {
                 event.preventDefault();
-                createDeviceInvite.mutate(inviteEmail);
+                createDeviceInvite.mutate("");
               }}>
-                <label>
-                  <span>{tr("Recipient email (optional)", "Email del destinatario (facoltativa)")}</span>
-                  <input
-                    aria-label={tr("Recipient email", "Email del destinatario")}
-                    onChange={(event) => setInviteEmail(event.target.value)}
-                    placeholder="nome@email.com"
-                    type="email"
-                    value={inviteEmail}
-                  />
-                </label>
-                <p className="invite-security-note">{tr("The link will add the person as a member of this private network and can be used only once.", "Il link aggiungerà la persona come membro della rete privata e potrà essere usato una sola volta.")}</p>
+                <p className="invite-security-note">{tr("A single-use key lets the device join this private network without a Tailscale account. It expires in 1 hour.", "Una chiave monouso fa entrare il dispositivo nella rete privata senza un account Tailscale. Scade dopo 1 ora.")}</p>
                 {createDeviceInvite.isError ? (
                   <p className="error-copy">{tr("The invite could not be created. Check the Tailscale API key and its permissions.", "Non è stato possibile creare l'invito. Controlla la chiave API Tailscale e i relativi permessi.")}</p>
                 ) : null}
@@ -1007,10 +1065,23 @@ export function App() {
                   <StatusDot label={tr("Invitation ready", "Invito pronto")} on={true} />
                   <div>
                     <strong>{tr("Invitation ready", "Invito pronto")}</strong>
-                    <p>{tr("Copy this message and send it by email or chat.", "Copia questo messaggio e invialo tramite email o chat.")}</p>
+                    <p>{tr("Copy this message and attach a helper, then send it by email or chat.", "Copia questo messaggio, allega un helper e invia tramite email o chat.")}</p>
                   </div>
                 </div>
                 <textarea aria-label={tr("Invitation message", "Messaggio di invito")} readOnly value={generatedInviteMessage} />
+                {createdInvite ? (
+                  <div className="invite-helpers">
+                    <span className="invite-security-note">{tr("Attach the helper for the recipient's system (the key is already inside):", "Allega l'helper per il sistema del destinatario (la chiave è già dentro):")}</span>
+                    <div className="invite-helper-buttons">
+                      <button className="secondary-button" type="button" onClick={() => downloadTextFile("join-modeldock.ps1", createdInvite.scripts.windows)}>
+                        {tr("Download Windows helper", "Scarica helper Windows")}
+                      </button>
+                      <button className="secondary-button" type="button" onClick={() => downloadTextFile("join-modeldock.command", createdInvite.scripts.macos)}>
+                        {tr("Download macOS helper", "Scarica helper macOS")}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="modal-actions">
                   <button className="secondary-button" onClick={() => {
                     setCreatedInvite(null);
@@ -1029,7 +1100,71 @@ export function App() {
   );
 }
 
-function buildDeviceInviteMessage(invite: TailnetUserInvite, chatUrl: string, language: LanguagePreference): string {
+interface AuthKeyInvite {
+  id: string;
+  key: string;
+  reusable: boolean;
+  ephemeral: boolean;
+  tags: string[];
+  expiresAt?: string;
+  chatUrl: string | null;
+  clientMessage: string;
+  scripts: { windows: string; macos: string };
+}
+
+function downloadTextFile(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildDeviceInviteMessage(authKey: string, chatUrl: string, language: LanguagePreference): string {
+  const chatLine = chatUrl && chatUrl.trim() ? chatUrl.trim() : undefined;
+
+  if (language === "it") {
+    return [
+      "Ciao, ti invito a usare il mio server AI privato.",
+      "",
+      "1. Scarica ed esegui l'helper di connessione ModelDock per il tuo sistema.",
+      "2. Quando richiesto, incolla questa chiave monouso (valida 1 ora):",
+      "",
+      `   ${authKey}`,
+      "",
+      "Oppure, se hai già Tailscale installato, esegui:",
+      "",
+      `   tailscale up --auth-key=${authKey}`,
+      "",
+      chatLine ? `Poi apri la chat: ${chatLine}` : "L'indirizzo della chat ti verrà comunicato a parte.",
+      "",
+      "La chiave è monouso e scade tra 1 ora. Non condividerla."
+    ].join("\n");
+  }
+
+  return [
+    "Hi, I invite you to use my private AI server.",
+    "",
+    "1. Download and run the ModelDock join helper for your system.",
+    "2. When asked, paste this one-time key (valid for 1 hour):",
+    "",
+    `   ${authKey}`,
+    "",
+    "Or, if you already have Tailscale installed, run:",
+    "",
+    `   tailscale up --auth-key=${authKey}`,
+    "",
+    chatLine ? `Then open the chat: ${chatLine}` : "The chat address will be shared separately.",
+    "",
+    "This key is single-use and expires in 1 hour. Do not share it."
+  ].join("\n");
+}
+
+function buildLegacyDeviceInviteMessage(invite: TailnetUserInvite, chatUrl: string, language: LanguagePreference): string {
   if (language === "it") {
     return `Ciao, ti invito a utilizzare il mio server AI.\n\n1. Installa Tailscale: https://tailscale.com/download\n2. Accetta questo invito personale: ${invite.inviteUrl}\n3. Accedi a Tailscale con il tuo account Google, GitHub o un altro provider.\n4. Quando la connessione è attiva, apri la chat: ${chatUrl}\n\nLe credenziali della chat ti verranno fornite separatamente.`;
   }
@@ -1074,10 +1209,13 @@ function translateGroupDescription(description: string | undefined, language: La
 }
 
 function translateDiagnosticLabel(label: string): string {
+  // These keys must match the labels in packages/diagnostics; the previous map
+  // guessed three of them and left half the page in English.
   const labels: Record<string, string> = {
+    "Audit storage": "Registro delle attività",
     "Backend health": "Stato del backend",
-    "Model inventory": "Inventario dei modelli",
-    "Storage health": "Stato dell'archiviazione",
+    "Ollama connection": "Connessione a Ollama",
+    "Ollama model inventory": "Modelli disponibili in Ollama",
     "Tailscale devices": "Dispositivi Tailscale",
     "Tailscale status": "Stato di Tailscale"
   };

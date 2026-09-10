@@ -5,7 +5,10 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import {
   buildApp,
+  buildClientInviteMessage,
+  buildClientInviteScript,
   provisionOpenWebUIAdmin,
+  readTailnetChatExposure,
   resolveManagedOpenWebUIBootstrapEnvironment,
   resolveManagedOpenWebUIRuntimeProfile,
   resolveOpenWebUILocalInstall,
@@ -13,12 +16,55 @@ import {
   summarizeOpenWebUIRuntimeFailure
 } from "./app.ts";
 
+describe("tailnet chat publication", () => {
+  const httpStatus = {
+    TCP: { "8080": { HTTP: true } },
+    Web: {
+      "desktop-5ff5muj.taile04c63.ts.net:8080": {
+        Handlers: { "/": { Proxy: "http://127.0.0.1:8080" } }
+      }
+    }
+  };
+
+  it("reads the shareable URL when the chat is served over plain HTTP inside the tailnet", () => {
+    expect(readTailnetChatExposure(httpStatus, 8080)).toEqual({
+      mode: "http",
+      url: "http://desktop-5ff5muj.taile04c63.ts.net:8080"
+    });
+  });
+
+  it("prefers the HTTPS form and drops the default port", () => {
+    const status = {
+      TCP: { "443": { HTTPS: true } },
+      Web: {
+        "desktop-5ff5muj.taile04c63.ts.net:443": {
+          Handlers: { "/": { Proxy: "http://127.0.0.1:8080" } }
+        }
+      }
+    };
+
+    expect(readTailnetChatExposure(status, 8080)).toEqual({
+      mode: "https",
+      url: "https://desktop-5ff5muj.taile04c63.ts.net"
+    });
+  });
+
+  it("ignores a publication that proxies a different local port", () => {
+    expect(readTailnetChatExposure(httpStatus, 3000)).toBeUndefined();
+  });
+
+  it("treats an empty serve configuration as not published", () => {
+    expect(readTailnetChatExposure({}, 8080)).toBeUndefined();
+    expect(readTailnetChatExposure(undefined, 8080)).toBeUndefined();
+  });
+});
+
 describe("Open WebUI runtime diagnostics", () => {
   it("allows only the initial administrator bootstrap while Open WebUI starts", () => {
     expect(resolveManagedOpenWebUIBootstrapEnvironment()).toEqual({
       ENABLE_API_KEYS: "true",
       ENABLE_INITIAL_ADMIN_SIGNUP: "true",
-      ENABLE_SIGNUP: "true"
+      ENABLE_SIGNUP: "false"
     });
   });
 
@@ -774,6 +820,51 @@ describe("ModelDock API", () => {
       module: "network",
       resourceId: "phone_1"
     });
+  });
+});
+
+describe("Client invite flow", () => {
+  it("builds a ready-to-send invite message with the key and chat address", () => {
+    const message = buildClientInviteMessage("tskey-auth-abc", "https://server.taildomain.ts.net");
+
+    expect(message).toContain("tailscale up --auth-key=tskey-auth-abc");
+    expect(message).toContain("https://server.taildomain.ts.net");
+    expect(message).toContain("single-use");
+    // The helper is attached, not promised as a mystery download.
+    expect(message).toContain("attached");
+  });
+
+  it("embeds the key inside downloadable per-OS helper scripts", () => {
+    const windows = buildClientInviteScript("windows", "tskey-auth-abc", "https://server.ts.net");
+    const macos = buildClientInviteScript("macos", "tskey-auth-abc", "https://server.ts.net");
+
+    expect(windows).toContain("$AuthKey = 'tskey-auth-abc'");
+    expect(windows).toContain("tailscale.exe");
+    expect(macos).toContain("AUTH_KEY='tskey-auth-abc'");
+    expect(macos.startsWith("#!/bin/bash")).toBe(true);
+  });
+
+  it("generates an auth-key invite through the API in fake mode", async () => {
+    const app = await buildApp({ logger: false, tailscaleMode: "fake" });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/network/tailscale/auth-keys",
+        payload: { chatUrl: "https://server.taildomain.ts.net" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.key).toBe("tskey-auth-modeldock-test");
+      expect(body.ephemeral).toBe(false);
+      expect(body.clientMessage).toContain("tskey-auth-modeldock-test");
+      expect(body.clientMessage).toContain("https://server.taildomain.ts.net");
+      expect(body.scripts.windows).toContain("tskey-auth-modeldock-test");
+      expect(body.scripts.macos).toContain("tskey-auth-modeldock-test");
+    } finally {
+      await app.close();
+    }
   });
 });
 

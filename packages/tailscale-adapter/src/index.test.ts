@@ -117,6 +117,63 @@ describe("Tailscale API gateway", () => {
       expiresAt: undefined
     });
   });
+
+  it("generates an untagged, persistent, pre-authorized auth key by default (zero ACL config)", async () => {
+    const gateway = new TailscaleApiGateway({
+      apiToken: "tskey-api-test",
+      clock,
+      fetchImpl: async (url, init) => {
+        expect(String(url)).toBe("https://api.tailscale.com/api/v2/tailnet/-/keys");
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          description: "ModelDock client invite",
+          expirySeconds: 3600,
+          capabilities: {
+            devices: {
+              create: {
+                reusable: false,
+                ephemeral: false,
+                preauthorized: true,
+                tags: []
+              }
+            }
+          }
+        });
+
+        return jsonResponse({
+          id: "key-1",
+          key: "tskey-auth-secret",
+          expires: "2026-09-03T01:00:00.000Z",
+          capabilities: { devices: { create: { reusable: false, ephemeral: false, tags: [] } } }
+        });
+      }
+    });
+
+    await expect(gateway.createAuthKey({})).resolves.toEqual({
+      id: "key-1",
+      key: "tskey-auth-secret",
+      reusable: false,
+      ephemeral: false,
+      tags: [],
+      expiresAt: "2026-09-03T01:00:00.000Z"
+    });
+  });
+
+  it("explains the auth_keys scope and tagOwners requirement when Tailscale rejects the key", async () => {
+    const gateway = new TailscaleApiGateway({
+      apiToken: "tskey-api-test",
+      clock,
+      fetchImpl: async () => new Response("forbidden", { status: 403 })
+    });
+
+    await expect(gateway.createAuthKey({ tags: ["tag:modeldock-client"] })).rejects.toMatchObject({
+      code: "TAILSCALE_AUTH_KEY_FAILED",
+      message: expect.stringContaining("auth_keys")
+    });
+    await expect(gateway.createAuthKey({ tags: ["tag:modeldock-client"] })).rejects.toMatchObject({
+      message: expect.stringContaining("tagOwners")
+    });
+  });
 });
 
 function jsonResponse(body: unknown): Response {

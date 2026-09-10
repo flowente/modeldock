@@ -104,6 +104,26 @@ export interface ManagedServerSetupStatus {
   updatedAt: string;
 }
 
+/**
+ * How the local chat is published to the tailnet.
+ *
+ * Open WebUI binds to loopback only. `tailscale serve` is what makes it
+ * reachable from other devices in the tailnet - and nothing else. Without it
+ * the chat is local to the server machine, so `active: false` is a real
+ * failure of the remote path, not a cosmetic detail.
+ */
+export type TailnetChatExposureMode = "https" | "http" | "none";
+
+export interface TailnetChatExposure {
+  active: boolean;
+  mode: TailnetChatExposureMode;
+  /** Shareable tailnet URL, present only when active. */
+  url?: string;
+  /** Local port being proxied (Open WebUI). */
+  port: number;
+  message: string;
+}
+
 export interface TailscaleSetupStatus {
   health: ComponentHealth;
   installed: boolean;
@@ -299,6 +319,31 @@ export interface UpdateTailnetDeviceInput {
   authorized: boolean;
 }
 
+export interface CreateTailnetAuthKeyInput {
+  /** Allow the key to enrol more than one device. Prefer false for single-use invites. */
+  reusable?: boolean;
+  /** Ephemeral devices are removed automatically when they go offline. */
+  ephemeral?: boolean;
+  /** Pre-authorize devices so they join without manual approval in the admin console. */
+  preauthorized?: boolean;
+  /** ACL tags that own the joined device (e.g. ["tag:modeldock-client"]). */
+  tags?: string[];
+  /** Key lifetime in seconds before it can no longer enrol devices. */
+  expirySeconds?: number;
+  /** Human-readable label shown in the Tailscale admin console. */
+  description?: string;
+}
+
+export interface TailnetAuthKey {
+  id: string;
+  /** The secret `tskey-...` value. Handle as a credential: never log or persist it. */
+  key: string;
+  reusable: boolean;
+  ephemeral: boolean;
+  tags: string[];
+  expiresAt?: string;
+}
+
 export interface DiagnosticCheckResult {
   id: string;
   label: string;
@@ -361,6 +406,7 @@ export interface TailscaleGateway {
   listDevices(): Promise<TailnetDevice[]>;
   createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite>;
   updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice>;
+  createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey>;
 }
 
 export interface ModelDockErrorShape {

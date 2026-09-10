@@ -62,6 +62,10 @@ describe("managed chat URL", () => {
     expect(resolveVisibleChatUrl("http://127.0.0.1:8080", "")).toBe("http://127.0.0.1:8080");
   });
 
+  it("adopts the detected private URL when no shareable URL exists yet", () => {
+    expect(resolveVisibleChatUrl("", "http://100.81.180.32:8080")).toBe("http://100.81.180.32:8080");
+  });
+
   it("accepts a non-loopback runtime URL as authoritative", () => {
     expect(resolveVisibleChatUrl("http://modeldock.tailnet.ts.net:8080", "http://100.81.180.32:8080")).toBe(
       "http://modeldock.tailnet.ts.net:8080"

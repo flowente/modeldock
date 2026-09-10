@@ -6,7 +6,7 @@ const pathOf = (path) => fileURLToPath(new URL(path, import.meta.url));
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["packages/**/*.test.ts", "apps/api/**/*.test.ts", "apps/web/**/*.test.tsx"],
+    include: ["packages/**/*.test.ts", "apps/api/**/*.test.ts", "apps/web/**/*.test.ts", "apps/web/**/*.test.tsx"],
     coverage: {
       reporter: ["text", "html"]
     }

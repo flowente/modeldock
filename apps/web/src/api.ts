@@ -18,6 +18,7 @@ export type {
   OpenWebUISetupStatus,
   SystemResources,
   SystemStatus,
+  TailnetChatExposure,
   TailnetDevice,
   TailnetUserInvite,
   TailscaleApiConnectionStatus,

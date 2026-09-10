@@ -2577,3 +2577,128 @@ code {
     width: 100%;
   }
 }
+
+.welcome-exit-link {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 20;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: inherit;
+  background: rgba(127, 127, 127, 0.14);
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  backdrop-filter: blur(6px);
+}
+
+.welcome-exit-link:hover {
+  background: rgba(127, 127, 127, 0.24);
+}
+
+.invite-helpers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.invite-helper-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Client invitation card - the whole client path in one object */
+.client-invite-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.22));
+  border-radius: 18px;
+  background: var(--surface, rgba(255, 255, 255, 0.55));
+}
+
+.client-invite-status {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.client-invite-status > .status-dot {
+  margin-top: 0.35rem;
+}
+
+.client-invite-status strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.client-invite-status p {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+.client-invite-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.client-invite-preview > span {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.client-invite-preview textarea {
+  min-height: 6.5rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.client-invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.client-invite-note {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  .client-invite-status {
+    grid-template-columns: auto 1fr;
+  }
+
+  .client-invite-status > button {
+    grid-column: 1 / -1;
+  }
+}
+
+/* A failed check must read as failed: grey says "unknown", not "broken". */
+.diagnostic-row.is-fail .status-dot,
+.diagnostic-row.is-warn .status-dot {
+  background: #c0392b;
+  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.16);
+}
+
+.diagnostic-row.is-warn .status-dot {
+  background: #b8860b;
+  box-shadow: 0 0 0 3px rgba(184, 134, 11, 0.16);
+}
+
+.diagnostic-row.is-fail .diagnostic-copy span,
+.diagnostic-row.is-warn .diagnostic-copy span {
+  opacity: 1;
+}
