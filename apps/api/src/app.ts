@@ -36,6 +36,7 @@ import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
 import { TailscaleApiGateway, TailscaleCliGateway } from "@modeldock/tailscale-adapter";
 import { createFakeDependencies } from "@modeldock/testing";
+import { resolveLocalEnvPath } from "./config.ts";
 import {
   prepareOpenWebUIRuntimeBundle,
   resolvePreparedRuntimePythonPath,
@@ -2503,7 +2504,7 @@ async function runFirstAvailableCommand(candidates: string[], args: string[], ti
   return { ok: false };
 }
 
-async function upsertLocalEnvValues(values: Record<string, string>, envPath = join(process.cwd(), ".env")): Promise<void> {
+async function upsertLocalEnvValues(values: Record<string, string>, envPath = resolveLocalEnvPath()): Promise<void> {
   const current = existsSync(envPath) ? await readFile(envPath, "utf8") : "";
   const lines = current ? current.split(/\r?\n/) : [];
   const pending = new Map(Object.entries(values));
