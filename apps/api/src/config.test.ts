@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadServerConfig, mergeStrayEnvFile, parseOllamaMode, parseTailscaleMode, resolveLocalEnvPath, resolveProjectRoot } from "./config.ts";
+import { loadServerConfig, mergeStrayEnvFile, parseOllamaMode, resolveLocalEnvPath, resolveProjectRoot } from "./config.ts";
 
 describe("server configuration", () => {
   it("uses safe local defaults", () => {
@@ -12,9 +12,23 @@ describe("server configuration", () => {
       port: 4317,
       logger: true,
       ollamaBaseUrl: "http://127.0.0.1:11434",
-      ollamaMode: "auto",
-      tailscaleMode: "auto"
+      ollamaMode: "auto"
     });
+  });
+
+  it("serves the built chat itself and runs the device connection by default", () => {
+    const config = loadServerConfig({ MODELDOCK_API_PORT: "5000" });
+    expect(config.webRoot).toBe(join(resolveProjectRoot(), "apps", "web", "dist"));
+    expect(config.link).toEqual({
+      port: 4319,
+      dataDir: join(resolveProjectRoot(), "data", "link"),
+      upstreamPort: 5000,
+      allowUnpairedBrowsers: true
+    });
+    expect(loadServerConfig({ MODELDOCK_LINK: "false" }).link).toBeUndefined();
+    expect(loadServerConfig({ MODELDOCK_LINK_ALLOW_BROWSERS: "false" }).link?.allowUnpairedBrowsers).toBe(false);
+    // Browsers without a device credential are never let in when login is off.
+    expect(loadServerConfig({ MODELDOCK_REQUIRE_LOGIN: "false" }).link?.allowUnpairedBrowsers).toBe(false);
   });
 
   it("keeps accounts in a database inside the install, and requires login unless told otherwise", () => {
@@ -33,9 +47,6 @@ describe("server configuration", () => {
     expect(parseOllamaMode("fake")).toBe("fake");
     expect(parseOllamaMode("real")).toBe("real");
     expect(parseOllamaMode("surprise")).toBe("auto");
-    expect(parseTailscaleMode("api")).toBe("api");
-    expect(parseTailscaleMode("cli")).toBe("cli");
-    expect(parseTailscaleMode("surprise")).toBe("auto");
   });
 });
 
@@ -44,7 +55,6 @@ describe("local environment file", () => {
     // The API is launched from apps/api; the root is where pnpm-workspace.yaml is.
     expect(existsSync(join(resolveProjectRoot(), "pnpm-workspace.yaml"))).toBe(true);
     expect(resolveLocalEnvPath()).toBe(join(resolveProjectRoot(), ".env"));
-    expect(loadServerConfig({}).localEnvPath).toBe(resolveLocalEnvPath());
   });
 
   it("folds a stray env file into the root one without losing existing values", () => {

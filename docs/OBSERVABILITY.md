@@ -1,5 +1,8 @@
 # ModelDock - Observability
 
+> **Outdated.** This page describes ModelDock before October 2026, when Open WebUI and Tailscale
+> were part of it. The current behaviour is in the README; this page is kept for history.
+
 Observability is part of the product. ModelDock must explain failures clearly because it sits between the user, Ollama, Tailscale, and local storage.
 
 ## Signals

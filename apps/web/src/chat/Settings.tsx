@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Copy, Trash2 } from "lucide-react";
+import { DevicesSection, ServerSection } from "./settings-server.tsx";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, type Account, type ModelPullJob, type Role, type StoredGroup } from "./chat-api.ts";
 import { explain, type ThemeChoice, type ThemeControl } from "./ChatApp.tsx";
@@ -31,6 +32,7 @@ const SECTIONS: Section[] = [
   { id: "aspetto", label: "Aspetto", visible: () => true },
   { id: "modelli", label: "Modelli e permessi", visible: (account) => account.role === "admin" },
   { id: "utenti", label: "Utenti e gruppi", visible: (account) => account.role === "admin" },
+  { id: "dispositivi", label: "Dispositivi", visible: (account) => account.role === "admin" },
   { id: "server", label: "Server", visible: (account) => account.role !== "member" }
 ];
 
@@ -60,7 +62,8 @@ export function Settings({ account, section, theme, onAccountChanged }: { accoun
           {current.id === "aspetto" ? <AppearanceSection theme={theme} /> : null}
           {current.id === "modelli" ? <ModelsSection /> : null}
           {current.id === "utenti" ? <UsersSection account={account} /> : null}
-          {current.id === "server" ? <ServerSection /> : null}
+          {current.id === "dispositivi" ? <DevicesSection /> : null}
+          {current.id === "server" ? <ServerSection account={account} /> : null}
         </div>
       </main>
     </div>
@@ -69,7 +72,7 @@ export function Settings({ account, section, theme, onAccountChanged }: { accoun
 
 /* ---------------------------------------------------------------- Shared bits */
 
-function Heading({ title, text, action }: { title: string; text?: string; action?: ReactNode }) {
+export function Heading({ title, text, action }: { title: string; text?: string; action?: ReactNode }) {
   return (
     <div className="md-settings-heading">
       <div>
@@ -81,7 +84,7 @@ function Heading({ title, text, action }: { title: string; text?: string; action
   );
 }
 
-function Card({ title, text, children }: { title?: string; text?: string; children: ReactNode }) {
+export function Card({ title, text, children }: { title?: string; text?: string; children: ReactNode }) {
   return (
     <section className="md-card">
       {title ? (
@@ -95,7 +98,7 @@ function Card({ title, text, children }: { title?: string; text?: string; childr
   );
 }
 
-function Feedback({ error, success }: { error?: unknown; success?: string | null }) {
+export function Feedback({ error, success }: { error?: unknown; success?: string | null }) {
   if (error) {
     return (
       <div className="md-form-error" role="alert">
@@ -113,7 +116,7 @@ function Feedback({ error, success }: { error?: unknown; success?: string | null
   return null;
 }
 
-function Switch({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: (value: boolean) => void; disabled?: boolean }) {
+export function Switch({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: (value: boolean) => void; disabled?: boolean }) {
   return (
     <button type="button" role="switch" aria-checked={checked} aria-label={label} className="md-switch" disabled={disabled} onClick={() => onChange(!checked)}>
       <span />
@@ -121,12 +124,12 @@ function Switch({ checked, label, onChange, disabled }: { checked: boolean; labe
   );
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   const gb = bytes / 1_000_000_000;
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1_000_000)} MB`;
 }
 
-function formatDate(iso: string): string {
+export function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
@@ -826,30 +829,6 @@ function GroupName({ group, onRename }: { group: StoredGroup; onRename: (name: s
           if (event.key === "Escape") setValue(group.name);
         }}
       />
-    </>
-  );
-}
-
-/* ---------------------------------------------------------------- Server */
-
-function ServerSection() {
-  const links = [
-    { href: "#home", title: "Stato del server", text: "Ollama, risorse del computer, accensione dei servizi." },
-    { href: "#devices", title: "Dispositivi e rete", text: "Chi è collegato e come si raggiunge ModelDock da fuori." },
-    { href: "#diagnostics", title: "Diagnostica", text: "I controlli automatici, con esiti reali." },
-    { href: "#usage", title: "Utilizzo", text: "Quali modelli sono caricati e quanta memoria usano." }
-  ];
-  return (
-    <>
-      <Heading title="Server" text="Queste parti sono ancora nel pannello avanzato. Entreranno qui quando la connessione fra dispositivi diventerà interna a ModelDock." />
-      <div className="md-link-grid">
-        {links.map((link) => (
-          <a key={link.href} className="md-link-card" href={link.href}>
-            <strong>{link.title}</strong>
-            <span>{link.text}</span>
-          </a>
-        ))}
-      </div>
     </>
   );
 }

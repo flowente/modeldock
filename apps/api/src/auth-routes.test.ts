@@ -10,7 +10,7 @@ const admin = { email: "simone@example.com", displayName: "Simone", password: "u
 const apps: FastifyInstance[] = [];
 
 async function start(options: Parameters<typeof buildApp>[0] = {}) {
-  const app = await buildApp({ ollamaMode: "fake", tailscaleMode: "fake", ...options });
+  const app = await buildApp({ ollamaMode: "fake", ...options });
   apps.push(app);
   return app;
 }
@@ -51,6 +51,16 @@ describe("account API", () => {
 
     const again = await app.inject({ method: "POST", url: "/api/auth/setup", payload: { ...admin, email: "x@example.com" } });
     expect(again.statusCode).toBe(409);
+  });
+
+  it("the first administrator can only be created from this computer, not through the device connection", async () => {
+    const app = await start();
+    // What the device connection adds for a phone on the Wi-Fi.
+    const remote = await app.inject({ method: "POST", url: "/api/auth/setup", headers: { "x-forwarded-for": "192.168.1.50" }, payload: admin });
+    expect(remote.statusCode).toBe(403);
+    expect(remote.json().error.code).toBe("SETUP_LOCAL_ONLY");
+    expect((await app.inject({ method: "GET", url: "/api/auth/state" })).json().setupRequired).toBe(true);
+    expect((await app.inject({ method: "POST", url: "/api/auth/setup", payload: admin })).statusCode).toBe(201);
   });
 
   it("login, me, logout", async () => {

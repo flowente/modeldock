@@ -1,5 +1,8 @@
 # ModelDock - Server Setup
 
+> **Outdated.** This page describes ModelDock before October 2026, when Open WebUI and Tailscale
+> were part of it. The current behaviour is in the README; this page is kept for history.
+
 This guide is for the computer that will act as the AI server.
 
 ## What the server runs

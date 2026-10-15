@@ -87,6 +87,7 @@ export function explain(error: unknown): string {
     ACCOUNT_NAME_INVALID: "Scrivi un nome (al massimo 80 caratteri).",
     ACCOUNT_EMAIL_TAKEN: "Esiste già un account con questa email.",
     ACCOUNT_SETUP_DONE: "L'amministratore esiste già: accedi con il tuo account.",
+    SETUP_LOCAL_ONLY: "Il primo account si crea dal computer su cui gira ModelDock, non da un altro dispositivo.",
     INVITATION_INVALID: "Questo link di invito non è valido.",
     INVITATION_USED: "Questo invito è già stato usato. Chiedine uno nuovo.",
     INVITATION_EXPIRED: "Questo invito è scaduto. Chiedine uno nuovo.",

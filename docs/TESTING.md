@@ -1,5 +1,8 @@
 # ModelDock - Testing
 
+> **Outdated.** This page describes ModelDock before October 2026, when Open WebUI and Tailscale
+> were part of it. The current behaviour is in the README; this page is kept for history.
+
 Testing starts with the architecture, not after it.
 
 ## Layers

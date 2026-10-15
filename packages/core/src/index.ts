@@ -32,8 +32,8 @@ export interface SystemStatus {
     backend: ComponentHealth;
     storage: ComponentHealth;
     ollama: ComponentHealth;
-    tailscale: ComponentHealth;
-    openWebUI: ComponentHealth;
+    /** The connection that lets other devices reach this server (modeldock-link). */
+    link: ComponentHealth;
   };
   warnings: string[];
 }
@@ -46,18 +46,11 @@ export interface SystemResources {
     usedBytes: number;
     usedRatio: number;
   };
-  gpu: {
-    status: "not_configured" | "not_detected" | "available";
-    message: string;
+  cpu: {
+    model: string;
+    cores: number;
   };
-  inferenceProjection: {
-    tokensPerSecond: {
-      min: number;
-      max: number;
-    };
-    confidence: "fake" | "estimated" | "measured";
-    message: string;
-  };
+  /* Only what is measured. No estimated speeds: a number nobody measured is not shown. */
 }
 
 export type AiServerPowerState = "on" | "off" | "starting" | "stopping" | "degraded";
@@ -65,8 +58,6 @@ export type AiServerPowerState = "on" | "off" | "starting" | "stopping" | "degra
 export interface AiServerPowerStatus {
   state: AiServerPowerState;
   ollamaReady: boolean;
-  chatReady: boolean;
-  managedChat: boolean;
   loadedModels: number;
   message: string;
   updatedAt: string;
@@ -80,105 +71,6 @@ export interface OllamaSetupStatus {
   modelCount: number;
   apiBaseUrl: string;
   apiExposesModelsPath: false;
-  message: string;
-}
-
-export type ManagedServerSetupState = "idle" | "running" | "succeeded" | "failed";
-export type ManagedServerSetupPhase =
-  | "idle"
-  | "checking"
-  | "installing_ollama"
-  | "starting_ollama"
-  | "installing_chat"
-  | "starting_chat"
-  | "configuring_admin"
-  | "ready"
-  | "failed";
-
-export interface ManagedServerSetupStatus {
-  state: ManagedServerSetupState;
-  phase: ManagedServerSetupPhase;
-  progress: number;
-  message: string;
-  ollamaReady: boolean;
-  chatReady: boolean;
-  adminReady: boolean;
-  chatUrl?: string;
-  startedAt?: string;
-  updatedAt: string;
-}
-
-/**
- * How the local chat is published to the tailnet.
- *
- * Open WebUI binds to loopback only. `tailscale serve` is what makes it
- * reachable from other devices in the tailnet - and nothing else. Without it
- * the chat is local to the server machine, so `active: false` is a real
- * failure of the remote path, not a cosmetic detail.
- */
-export type TailnetChatExposureMode = "https" | "http" | "none";
-
-export interface TailnetChatExposure {
-  active: boolean;
-  mode: TailnetChatExposureMode;
-  /** Shareable tailnet URL, present only when active. */
-  url?: string;
-  /** Local port being proxied (Open WebUI). */
-  port: number;
-  message: string;
-}
-
-export interface TailscaleSetupStatus {
-  health: ComponentHealth;
-  installed: boolean;
-  loggedIn: boolean;
-  backendState?: string;
-  tailnet?: string;
-  hostname?: string;
-  addresses: string[];
-  suggestedServerUrl?: string;
-  apiRequiredForDeviceWrites: boolean;
-  message: string;
-}
-
-export interface TailscaleApiConnectionStatus {
-  configured: boolean;
-  connected: boolean;
-  message: string;
-}
-
-export interface OpenWebUISetupStatus {
-  health: ComponentHealth;
-  baseUrl?: string;
-  reachable: boolean;
-  apiKeyConfigured: boolean;
-  adminVerified: boolean;
-  authenticatedUser?: {
-    id?: string;
-    name?: string;
-    email?: string;
-    role?: string;
-  };
-  modelCount?: number;
-  message: string;
-}
-
-export type OpenWebUIRuntimeState = "running" | "starting" | "not_running" | "tool_missing";
-
-export interface OpenWebUIRuntimeStatus {
-  health: ComponentHealth;
-  baseUrl: string;
-  dataDir: string;
-  executablePath?: string;
-  installPath?: string;
-  installed: boolean;
-  managedRuntimeAvailable: boolean;
-  port: number;
-  uvAvailable: boolean;
-  running: boolean;
-  startedByModelDock: boolean;
-  state: OpenWebUIRuntimeState;
-  log: string[];
   message: string;
 }
 
@@ -434,59 +326,6 @@ export interface InferenceProbe {
   tokenCount?: number;
 }
 
-export interface TailnetDevice {
-  id: string;
-  hostname: string;
-  addresses: string[];
-  online: boolean | "unknown";
-  authorized: boolean;
-  os?: string;
-  lastSeen?: string;
-}
-
-export interface CreateTailnetUserInviteInput {
-  email?: string;
-  role?: "member";
-}
-
-export interface TailnetUserInvite {
-  id: string;
-  inviteUrl: string;
-  role: "member";
-  email?: string;
-  expiresAt?: string;
-}
-
-export interface UpdateTailnetDeviceInput {
-  deviceId: string;
-  authorized: boolean;
-}
-
-export interface CreateTailnetAuthKeyInput {
-  /** Allow the key to enrol more than one device. Prefer false for single-use invites. */
-  reusable?: boolean;
-  /** Ephemeral devices are removed automatically when they go offline. */
-  ephemeral?: boolean;
-  /** Pre-authorize devices so they join without manual approval in the admin console. */
-  preauthorized?: boolean;
-  /** ACL tags that own the joined device (e.g. ["tag:modeldock-client"]). */
-  tags?: string[];
-  /** Key lifetime in seconds before it can no longer enrol devices. */
-  expirySeconds?: number;
-  /** Human-readable label shown in the Tailscale admin console. */
-  description?: string;
-}
-
-export interface TailnetAuthKey {
-  id: string;
-  /** The secret `tskey-...` value. Handle as a credential: never log or persist it. */
-  key: string;
-  reusable: boolean;
-  ephemeral: boolean;
-  tags: string[];
-  expiresAt?: string;
-}
-
 export interface DiagnosticCheckResult {
   id: string;
   label: string;
@@ -551,14 +390,6 @@ export interface OllamaGateway {
   getModelCapabilities(name: string): Promise<string[]>;
 }
 
-export interface TailscaleGateway {
-  getLocalStatus(): Promise<ComponentHealth>;
-  listDevices(): Promise<TailnetDevice[]>;
-  createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite>;
-  updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice>;
-  createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey>;
-}
-
 export interface ModelDockErrorShape {
   code: string;
   message: string;
@@ -616,14 +447,14 @@ export interface BuildSystemStatusInput {
   backend: ComponentHealth;
   storage: ComponentHealth;
   ollama: ComponentHealth;
-  tailscale: ComponentHealth;
-  openWebUI: ComponentHealth;
+  link: ComponentHealth;
   checkedAt: string;
 }
 
 export function buildSystemStatus(input: BuildSystemStatusInput): SystemStatus {
-  const requiredComponents = [input.backend, input.storage, input.ollama, input.tailscale];
-  const healthComponents = input.openWebUI.status === "not_configured" ? requiredComponents : [...requiredComponents, input.openWebUI];
+  // A connection switched off on purpose ("not_configured") does not make the server unhealthy.
+  const required = [input.backend, input.storage, input.ollama];
+  const healthComponents = input.link.status === "not_configured" ? required : [...required, input.link];
 
   return {
     overall: evaluateOverall(healthComponents),
@@ -632,8 +463,7 @@ export function buildSystemStatus(input: BuildSystemStatusInput): SystemStatus {
       backend: input.backend,
       storage: input.storage,
       ollama: input.ollama,
-      tailscale: input.tailscale,
-      openWebUI: input.openWebUI
+      link: input.link
     },
     warnings: collectWarnings(healthComponents)
   };

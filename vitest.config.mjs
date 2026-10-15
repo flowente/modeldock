@@ -16,10 +16,10 @@ export default defineConfig({
       "@modeldock/auth": pathOf("./packages/auth/src/index.ts"),
       "@modeldock/core": pathOf("./packages/core/src/index.ts"),
       "@modeldock/diagnostics": pathOf("./packages/diagnostics/src/index.ts"),
+      "@modeldock/link": pathOf("./packages/link/src/index.ts"),
       "@modeldock/observability": pathOf("./packages/observability/src/index.ts"),
       "@modeldock/ollama-adapter": pathOf("./packages/ollama-adapter/src/index.ts"),
       "@modeldock/storage": pathOf("./packages/storage/src/index.ts"),
-      "@modeldock/tailscale-adapter": pathOf("./packages/tailscale-adapter/src/index.ts"),
       "@modeldock/testing": pathOf("./packages/testing/src/index.ts")
     }
   }

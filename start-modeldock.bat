@@ -84,11 +84,11 @@ if defined MODELDOCK_CHECK_ONLY (
 )
 
 echo [4/4] Avvio di ModelDock...
-echo La pagina di benvenuto si aprira automaticamente.
+echo La chat si aprira automaticamente nel browser.
 echo Chiudi questa finestra per arrestare ModelDock.
 echo.
 
-start "" powershell.exe -NoProfile -WindowStyle Hidden -Command "$url='http://127.0.0.1:4173/#welcome'; for($i=0;$i -lt 120;$i++){ try { $null=Invoke-WebRequest 'http://127.0.0.1:4173/' -UseBasicParsing -TimeoutSec 2; $null=Invoke-WebRequest 'http://127.0.0.1:4317/api/health' -UseBasicParsing -TimeoutSec 2; Start-Process $url; exit 0 } catch {}; Start-Sleep -Seconds 1 }"
+start "" powershell.exe -NoProfile -WindowStyle Hidden -Command "$url='http://127.0.0.1:4317/'; for($i=0;$i -lt 120;$i++){ try { $null=Invoke-WebRequest 'http://127.0.0.1:4317/api/health' -UseBasicParsing -TimeoutSec 2; Start-Process $url; exit 0 } catch {}; Start-Sleep -Seconds 1 }"
 call "%MODELDOCK_NPX%" --yes pnpm@%MODELDOCK_VERSION% start
 exit /b %errorlevel%
 
@@ -97,7 +97,7 @@ echo Avvia ModelDock con un doppio clic.
 echo.
 echo Se il file si trova nella repository, usa quella cartella.
 echo Se e stato scaricato da solo, scarica ModelDock in %%LOCALAPPDATA%%\ModelDock\app.
-echo Prepara un runtime locale, aggiorna l'app, crea la build stabile, avvia i servizi e apre la welcome page.
+echo Prepara un runtime locale, aggiorna l'app, crea la build stabile, avvia ModelDock e apre la chat.
 echo Usa --check per verificare il launcher senza avviare i server.
 exit /b 0
 

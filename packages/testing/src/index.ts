@@ -16,14 +16,7 @@ import type {
   ModelRuntimeInput,
   OllamaGateway,
   PullModelInput,
-  RunningModel,
-  CreateTailnetAuthKeyInput,
-  CreateTailnetUserInviteInput,
-  TailnetAuthKey,
-  TailnetDevice,
-  TailnetUserInvite,
-  TailscaleGateway,
-  UpdateTailnetDeviceInput
+  RunningModel
 } from "@modeldock/core";
 import { createComponentHealth, ModelDockError, setModelEnabled, setModelLoaded } from "@modeldock/core";
 import { SequentialIdGenerator } from "@modeldock/observability";
@@ -249,121 +242,6 @@ function inferFakeModelSizeBytes(name: string): number {
   return 3_600_000_000;
 }
 
-export class FakeTailscaleGateway implements TailscaleGateway {
-  private readonly mode: "ok" | "offline" | "empty";
-  private readonly devices = new Map<string, TailnetDevice>([
-    [
-      "node_local",
-      {
-        id: "node_local",
-        hostname: "modeldock-node",
-        addresses: ["100.64.0.10"],
-        online: true,
-        authorized: true,
-        os: "windows",
-        lastSeen: "2026-08-29T00:00:00.000Z"
-      }
-    ],
-    [
-      "phone_1",
-      {
-        id: "phone_1",
-        hostname: "simone-phone",
-        addresses: ["100.64.0.20"],
-        online: false,
-        authorized: false,
-        os: "ios",
-        lastSeen: "2026-08-28T22:00:00.000Z"
-      }
-    ]
-  ]);
-
-  public constructor(mode: "ok" | "offline" | "empty" = "ok") {
-    this.mode = mode;
-  }
-
-  public async getLocalStatus(): Promise<ComponentHealth> {
-    if (this.mode === "offline") {
-      return createComponentHealth(
-        {
-          name: "tailscale",
-          status: "unavailable",
-          message: "Tailscale fake is offline"
-        },
-        new FixedClock()
-      );
-    }
-
-    return createComponentHealth(
-      {
-        name: "tailscale",
-        status: "available",
-        message: "Tailscale fake is connected",
-        details: { tailnetIp: "100.64.0.10", hostname: "modeldock-node" }
-      },
-      new FixedClock()
-    );
-  }
-
-  public async listDevices(): Promise<TailnetDevice[]> {
-    if (this.mode === "empty") {
-      return [];
-    }
-
-    return [...this.devices.values()].map((device) => cloneDevice(device));
-  }
-
-  public async createUserInvite(input: CreateTailnetUserInviteInput): Promise<TailnetUserInvite> {
-    const email = input.email?.trim().toLowerCase();
-
-    return {
-      id: "invite-1",
-      inviteUrl: "https://login.tailscale.com/uinv/modeldock-test",
-      role: "member",
-      email,
-      expiresAt: "2026-10-02T00:00:00.000Z"
-    };
-  }
-
-  public async createAuthKey(input: CreateTailnetAuthKeyInput): Promise<TailnetAuthKey> {
-    return {
-      id: "authkey-1",
-      key: "tskey-auth-modeldock-test",
-      reusable: input.reusable ?? false,
-      ephemeral: input.ephemeral ?? false,
-      tags: input.tags ?? [],
-      expiresAt: "2026-08-29T01:00:00.000Z"
-    };
-  }
-
-  public async updateDeviceAuthorization(input: UpdateTailnetDeviceInput): Promise<TailnetDevice> {
-    const current = this.devices.get(input.deviceId);
-
-    if (!current) {
-      throw new ModelDockError({
-        code: "TAILNET_DEVICE_NOT_FOUND",
-        module: "tailscale-adapter",
-        message: `No Tailscale device exists with id ${input.deviceId}`
-      });
-    }
-
-    const next = {
-      ...current,
-      authorized: input.authorized
-    };
-
-    this.devices.set(input.deviceId, next);
-    return cloneDevice(next);
-  }
-}
-
-function cloneDevice(device: TailnetDevice): TailnetDevice {
-  return {
-    ...device,
-    addresses: [...device.addresses]
-  };
-}
-
 export class FakeModelAccessStore implements ModelAccessStore {
   private readonly users: AccessUser[] = [
     {
@@ -543,7 +421,6 @@ export function createFakeDependencies() {
     ids,
     auditStore,
     modelAccess: new FakeModelAccessStore(),
-    ollama: new FakeOllamaGateway(),
-    tailscale: new FakeTailscaleGateway()
+    ollama: new FakeOllamaGateway()
   };
 }

@@ -1,5 +1,8 @@
 # ModelDock - MVP
 
+> **Outdated.** This page describes ModelDock before October 2026, when Open WebUI and Tailscale
+> were part of it. The current behaviour is in the README; this page is kept for history.
+
 ## Goal
 
 The MVP is successful when a user can run ModelDock on an AI server machine and understand, test and operate the core local LLM setup:

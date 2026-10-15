@@ -1,17 +1,16 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { arch, freemem, homedir, hostname as getOsHostname, platform, totalmem } from "node:os";
-import { join, posix } from "node:path";
+import { cpus, freemem, homedir, platform, totalmem } from "node:os";
+import { join } from "node:path";
+import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   buildSystemStatus,
   createComponentHealth,
   ModelDockError,
-  type AuditEvent,
-  type AuditStore,
   type AiServerPowerStatus,
+  type AuditEvent,
   type Clock,
   type ComponentHealth,
   type DiagnosticCheckResult,
@@ -19,202 +18,54 @@ import {
   type Model,
   type ModelAccessStore,
   type ModelPullJob,
-  type ModelPullJobStatus,
-  type ManagedServerSetupStatus,
-  type OllamaSetupStatus,
   type OllamaGateway,
-  type OpenWebUISetupStatus,
-  type OpenWebUIRuntimeStatus,
-  type SystemResources,
-  type TailnetChatExposure,
-  type TailnetDevice,
-  type TailnetUserInvite,
-  type TailscaleGateway,
-  type TailscaleApiConnectionStatus,
-  type TailscaleSetupStatus
+  type OllamaSetupStatus,
+  type SystemResources
 } from "@modeldock/core";
-import { createDiagnosticRegistry } from "@modeldock/diagnostics";
-import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
-import { TailscaleApiGateway, TailscaleCliGateway } from "@modeldock/tailscale-adapter";
 import { AccountService } from "@modeldock/auth";
+import { createDiagnosticRegistry } from "@modeldock/diagnostics";
+import { FileStateStore, LinkRegistry, listLanAddresses, loadOrCreateIdentity, startLinkServer } from "@modeldock/link";
+import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
 import { openDatabase, SqliteAccountStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
 import { createFakeDependencies } from "@modeldock/testing";
 import { registerAccountRoutes } from "./auth-routes.ts";
 import { registerChatRoutes } from "./chat-routes.ts";
-import { resolveLocalEnvPath } from "./config.ts";
-import {
-  prepareOpenWebUIRuntimeBundle,
-  resolvePreparedRuntimePythonPath,
-  type PreparedOpenWebUIRuntime,
-  type RuntimePreparationProgress
-} from "./openwebui-runtime.ts";
+import { registerDevicesRoutes, type LinkRuntime } from "./devices-routes.ts";
 
 export type OllamaRuntimeMode = "fake" | "real" | "auto";
-export type TailscaleRuntimeMode = "fake" | "real" | "cli" | "api" | "auto";
+
+export interface LinkOptions {
+  /** Port other devices connect to. 0 picks a free one (tests). */
+  port: number;
+  /** Where the connection keeps its certificate and its devices. */
+  dataDir: string;
+  /** The API's own port: the connection forwards there. */
+  upstreamPort: number;
+  /** Lets a phone's browser on the same network in, protected only by the login. */
+  allowUnpairedBrowsers: boolean;
+  /** Network interface to listen on. Defaults to every interface. */
+  listenHost?: string;
+}
 
 export interface BuildAppOptions {
   logger?: boolean;
   /**
-   * SQLite file for accounts, permissions and the audit log. Without it the
-   * accounts live in a throwaway in-memory database and permissions stay on
-   * the demo data: that is for tests, never for a real install.
+   * SQLite file for accounts, permissions, conversations and the audit log. Without it the
+   * data lives in a throwaway in-memory database and permissions stay on the demo data:
+   * that is for tests, never for a real install.
    */
   databasePath?: string;
   /** Every API route needs a signed-in account. The server config turns it on; tests leave it off. */
   requireLogin?: boolean;
-  /** Replaces the Ollama gateway. For tests that need a model with a particular behaviour. */
-  ollamaGateway?: OllamaGateway;
   ollamaBaseUrl?: string;
   ollamaModelsPath?: string;
   ollamaMode?: OllamaRuntimeMode;
-  openWebUIApiKey?: string;
-  openWebUIBaseUrl?: string;
-  openWebUIFetch?: typeof fetch;
-  openWebUIRuntime?: OpenWebUIRuntimeController;
-  localEnvPath?: string;
-  tailscaleApiBaseUrl?: string;
-  tailscaleApiToken?: string;
-  tailscaleFetch?: typeof fetch;
-  tailscaleMode?: TailscaleRuntimeMode;
-  tailscaleTailnet?: string;
-}
-
-interface OpenWebUIRuntimeController {
-  getDataDir(): string;
-  getLog(): string[];
-  hasPreparedRuntime?(): boolean;
-  isStartedByModelDock(): boolean;
-  isUvAvailable(): Promise<boolean>;
-  prepareManagedRuntime?(onProgress?: (progress: RuntimePreparationProgress) => void): Promise<boolean>;
-  stop?(): Promise<{ stopped: boolean; message: string }>;
-  start(input: {
-    compatibilityMode?: boolean;
-    dataDir: string;
-    executablePath?: string;
-    installPath?: string;
-    port: number;
-  }): Promise<{ started: boolean; message: string }>;
-}
-
-const OPEN_WEBUI_COMPATIBILITY_VERSION = "0.11.1";
-const OPEN_WEBUI_INTEL_MAC_VERSION = "0.7.2";
-const INTEL_MAC_CRYPTOGRAPHY_VERSION = "48.0.1";
-
-export function resolveManagedOpenWebUIRuntimeProfile(
-  platformId: NodeJS.Platform = platform(),
-  architecture: NodeJS.Architecture = arch(),
-  compatibilityMode = false
-): {
-  extraPackages: string[];
-  packageSpec: string;
-  profile: "current" | "compatibility" | "intel-mac";
-} {
-  const platformPackages = platformId === "win32" ? ["pywin32"] : [];
-
-  if (platformId === "darwin" && architecture === "x64") {
-    return {
-      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4", `cryptography==${INTEL_MAC_CRYPTOGRAPHY_VERSION}`],
-      packageSpec: `open-webui@${OPEN_WEBUI_INTEL_MAC_VERSION}`,
-      profile: "intel-mac"
-    };
-  }
-
-  if (compatibilityMode) {
-    return {
-      extraPackages: ["greenlet", "itsdangerous", "beautifulsoup4", ...platformPackages],
-      packageSpec: `open-webui@${OPEN_WEBUI_COMPATIBILITY_VERSION}`,
-      profile: "compatibility"
-    };
-  }
-
-  return {
-    extraPackages: platformPackages,
-    packageSpec: "open-webui@latest",
-    profile: "current"
-  };
-}
-
-export function resolveManagedOpenWebUIBootstrapEnvironment(): Record<string, string> {
-  // Only the first administrator may be created (ENABLE_INITIAL_ADMIN_SIGNUP).
-  // Public self-registration stays off so nobody who can reach the chat can
-  // create their own account. ModelDock provisions access explicitly.
-  return {
-    ENABLE_API_KEYS: "true",
-    ENABLE_INITIAL_ADMIN_SIGNUP: "true",
-    ENABLE_SIGNUP: "false"
-  };
-}
-
-/**
- * Builds the ready-to-send message a server owner pastes to a client.
- * The whole point is a fluid experience: the client runs one line and is in.
- * The auth key is a single-use credential embedded here; treat the message as a secret.
- */
-export function buildClientInviteMessage(authKey: string, chatUrl?: string): string {
-  const chatLine = chatUrl && chatUrl.trim() ? chatUrl.trim() : "(the server owner will share the chat address)";
-
-  return [
-    "You have been invited to a private ModelDock AI server.",
-    "",
-    "1. Run the ModelDock join helper attached to this message",
-    "   (join-modeldock.ps1 on Windows, join-modeldock.command on macOS).",
-    "   It installs Tailscale if needed and connects you automatically.",
-    "",
-    "   If you already have Tailscale installed, you can instead run:",
-    "",
-    `   tailscale up --auth-key=${authKey}`,
-    "",
-    `2. Open the chat: ${chatLine}`,
-    "",
-    "No account is required. The key is single-use and expires in 1 hour.",
-    "Do not share it."
-  ].join("\n");
-}
-
-export type InviteScriptOs = "windows" | "macos";
-
-/**
- * Builds a self-contained join helper with the one-time key already embedded,
- * so the recipient just runs the file - no copy/paste, no separate download.
- */
-export function buildClientInviteScript(os: InviteScriptOs, authKey: string, chatUrl?: string): string {
-  const chat = chatUrl && chatUrl.trim() ? chatUrl.trim() : "";
-
-  if (os === "windows") {
-    return [
-      "# ModelDock join helper (Windows) - generated invite, key embedded.",
-      "# The key is single-use and expires in 1 hour. Do not share this file.",
-      "$ErrorActionPreference = 'Stop'",
-      `$AuthKey = '${authKey}'`,
-      `$ChatUrl = '${chat}'`,
-      "$ts = 'C:\\Program Files\\Tailscale\\tailscale.exe'",
-      "if (-not (Test-Path $ts)) {",
-      "  Write-Host 'Installing Tailscale...'",
-      "  $installer = Join-Path $env:TEMP 'tailscale-setup.exe'",
-      "  Invoke-WebRequest -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe' -OutFile $installer",
-      "  Start-Process -FilePath $installer -ArgumentList '/quiet' -Wait",
-      "}",
-      "& $ts up --authkey $AuthKey --hostname $env:COMPUTERNAME --accept-routes",
-      "if ($ChatUrl -ne '') { Start-Process $ChatUrl }",
-      "Write-Host 'Done. You are on the private network.'"
-    ].join("\r\n");
-  }
-
-  return [
-    "#!/bin/bash",
-    "# ModelDock join helper (macOS) - generated invite, key embedded.",
-    "# The key is single-use and expires in 1 hour. Do not share this file.",
-    "set -euo pipefail",
-    `AUTH_KEY='${authKey}'`,
-    `CHAT_URL='${chat}'`,
-    'if ! command -v tailscale >/dev/null 2>&1 && [ ! -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then',
-    '  if command -v brew >/dev/null 2>&1; then brew install --cask tailscale; else open "https://tailscale.com/download/mac"; echo "Install Tailscale, then re-run this file."; exit 1; fi',
-    "fi",
-    'TS=tailscale; command -v tailscale >/dev/null 2>&1 || TS="/Applications/Tailscale.app/Contents/MacOS/Tailscale"',
-    'sudo "$TS" up --authkey "$AUTH_KEY" --hostname "$(hostname -s)" --accept-routes',
-    'if [ -n "$CHAT_URL" ]; then open "$CHAT_URL"; fi',
-    'echo "Done. You are on the private network."'
-  ].join("\n");
+  /** Replaces the Ollama gateway. For tests that need a model with a particular behaviour. */
+  ollamaGateway?: OllamaGateway;
+  /** The built web app, served at "/". Left out in tests and in development, where Vite serves it. */
+  webRoot?: string;
+  /** The connection between devices (modeldock-link). Left out, ModelDock runs without it. */
+  link?: LinkOptions;
 }
 
 interface RuntimeDependencies {
@@ -223,19 +74,45 @@ interface RuntimeDependencies {
   storage: { persistent: boolean; location: string; close(): void };
   clock: Clock;
   ids: IdGenerator;
-  auditStore: AuditStore;
+  auditStore: SqliteAuditStore | ReturnType<typeof createFakeDependencies>["auditStore"];
   modelAccess: ModelAccessStore;
   ollama: OllamaGateway;
-  tailscale: TailscaleGateway;
-  tailscaleLocal: TailscaleGateway;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const dependencies = createRuntimeDependencies(options);
-  const diagnostics = createDiagnosticRegistry(dependencies);
+  const link = options.link ? await startLink(options.link) : null;
+  const diagnostics = createDiagnosticRegistry({ ...dependencies, ...(link ? { link: async () => linkHealth(link, dependencies.clock) } : {}) });
   const modelPullJobs = new Map<string, ModelPullJob>();
-  const openWebUIRuntime = options.openWebUIRuntime ?? createOpenWebUIRuntimeController();
-  const app = Fastify({ logger: options.logger ?? false });
+  let powerTransition: "starting" | null = null;
+
+  // Requests that come through the device connection carry the device's real address in
+  // X-Forwarded-For. Trust it only from the connection itself, which runs on this machine.
+  const app = Fastify({ logger: options.logger ?? false, trustProxy: ["127.0.0.1", "::1"] });
+
+  // First, before any route or plugin: routes registered earlier than the handler, or before an
+  // awaited plugin, keep Fastify's default one and every ModelDockError would come out as a 500.
+  app.setErrorHandler(async (error, request, reply) => {
+    if (error instanceof ModelDockError) {
+      await reply.status(error.httpStatus).send({
+        error: { code: error.code, message: error.message, module: error.module, suggestion: error.suggestion, correlationId: request.id }
+      });
+      return;
+    }
+
+    const httpError = error as { statusCode?: unknown; message?: unknown };
+    const statusCode = typeof httpError.statusCode === "number" ? httpError.statusCode : 500;
+    const message = typeof httpError.message === "string" ? httpError.message : "HTTP request error";
+
+    if (statusCode < 500) {
+      await reply.status(statusCode).send({ error: { code: "HTTP_REQUEST_ERROR", message, module: "api", correlationId: request.id } });
+      return;
+    }
+
+    request.log.error({ error }, "Unhandled ModelDock API error");
+    await reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "Unexpected ModelDock API error", module: "api", correlationId: request.id } });
+  });
+
   registerAccountRoutes(app, {
     accounts: dependencies.accounts,
     auditStore: dependencies.auditStore,
@@ -249,79 +126,47 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     modelAccess: dependencies.modelAccess,
     clock: dependencies.clock
   });
-  // Windows keeps an open database file locked: release it when the API stops.
-  app.addHook("onClose", async () => dependencies.storage.close());
-  let managedServerSetup = createInitialManagedServerSetupStatus(dependencies.clock);
-  let powerTransition: "starting" | "stopping" | null = null;
+  registerDevicesRoutes(app, { link, auditStore: dependencies.auditStore, clock: dependencies.clock });
 
-  // Tailscale in `fake` mode means tests and demos: never shell out to the real
-  // CLI there, both to stay deterministic and to keep setup fast.
-  const tailscaleIsSimulated = (options.tailscaleMode ?? "fake") === "fake";
-
-  async function publishChatToTailnet(port: number): Promise<TailnetChatExposure> {
-    if (tailscaleIsSimulated) {
-      return { active: false, mode: "none", port, message: "Tailscale is running in simulated mode, so the chat is not published." };
-    }
-
-    return exposeChatOnTailnet(port);
-  }
-
-  async function unpublishChatFromTailnet(port: number): Promise<void> {
-    if (tailscaleIsSimulated) {
-      return;
-    }
-
-    await withdrawChatFromTailnet(port);
-  }
-
-  function getTailscaleManagementGateway(): TailscaleGateway {
-    if (!options.tailscaleApiToken?.trim()) {
-      return dependencies.tailscale;
-    }
-
-    return new TailscaleApiGateway({
-      apiToken: options.tailscaleApiToken,
-      baseUrl: options.tailscaleApiBaseUrl,
-      clock: dependencies.clock,
-      fetchImpl: options.tailscaleFetch,
-      tailnet: options.tailscaleTailnet
-    });
-  }
-
-  async function readAiServerPowerStatus(): Promise<AiServerPowerStatus> {
-    const baseUrl = resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl);
-    const [ollama, chat, runningModels] = await Promise.all([
-      dependencies.ollama.getHealth(),
-      getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch),
-      dependencies.ollama.listRunningModels().catch(() => [])
-    ]);
-    const ollamaReady = ollama.status === "available";
-    const chatReady = chat.status === "available";
-    const state = powerTransition ?? (ollamaReady && chatReady ? "on" : !chatReady ? "off" : "degraded");
-
-    return {
-      state,
-      ollamaReady,
-      chatReady,
-      managedChat: openWebUIRuntime.isStartedByModelDock(),
-      loadedModels: runningModels.length,
-      message:
-        state === "on"
-          ? "The AI services are ready."
-          : state === "off"
-            ? "The AI services are off. ModelDock and Tailscale remain reachable."
-            : state === "starting"
-              ? "The AI services are starting."
-              : state === "stopping"
-                ? "The AI services are stopping."
-                : "One or more AI services need attention.",
-      updatedAt: dependencies.clock.now().toISOString()
-    };
-  }
+  app.addHook("onClose", async () => {
+    await link?.server.close();
+    // Windows keeps an open database file locked: release it when the API stops.
+    dependencies.storage.close();
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     reply.header("x-correlation-id", request.id);
   });
+
+  if (options.webRoot && existsSync(join(options.webRoot, "index.html"))) {
+    await app.register(fastifyStatic, {
+      root: options.webRoot,
+      // The plugin's own Cache-Control would overwrite the one set below.
+      cacheControl: false,
+      // The page itself must never be cached: after an update it points at the new files.
+      setHeaders: (response, path) => {
+        if (path.endsWith("index.html")) response.setHeader("cache-control", "no-cache");
+      }
+    });
+  }
+
+  async function readPowerStatus(): Promise<AiServerPowerStatus> {
+    const [ollama, runningModels] = await Promise.all([dependencies.ollama.getHealth(), dependencies.ollama.listRunningModels().catch(() => [])]);
+    const ollamaReady = ollama.status === "available";
+    const state = powerTransition ?? (ollamaReady ? "on" : "off");
+    return {
+      state,
+      ollamaReady,
+      loadedModels: runningModels.length,
+      message:
+        state === "on"
+          ? "Ollama is running."
+          : state === "starting"
+            ? "Ollama is starting."
+            : "Ollama is not running: nobody can chat until it starts.",
+      updatedAt: dependencies.clock.now().toISOString()
+    };
+  }
 
   app.get("/api/health", async () => ({
     status: "ok",
@@ -330,303 +175,37 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   }));
 
   app.get("/api/system/status", async () => {
-    const [ollama, tailscale, openWebUI] = await Promise.all([
-      dependencies.ollama.getHealth(),
-      dependencies.tailscale.getLocalStatus(),
-      getOpenWebUIHealth(options.openWebUIBaseUrl, dependencies.clock, options.openWebUIFetch)
-    ]);
-
+    const ollama = await dependencies.ollama.getHealth();
     return buildSystemStatus({
       backend: createComponentHealth({ name: "backend", status: "available", message: "ModelDock API is running" }, dependencies.clock),
       storage: createComponentHealth(
         dependencies.storage.persistent
           ? { name: "storage", status: "available", message: `Database at ${dependencies.storage.location}` }
-          : { name: "storage", status: "degraded", message: "In-memory storage: accounts and permissions are lost on restart" },
+          : { name: "storage", status: "degraded", message: "In-memory storage: accounts and conversations are lost on restart" },
         dependencies.clock
       ),
       ollama,
-      tailscale,
-      openWebUI,
+      link: link
+        ? linkHealth(link, dependencies.clock)
+        : createComponentHealth({ name: "link", status: "not_configured", message: "The connection between devices is switched off." }, dependencies.clock),
       checkedAt: dependencies.clock.now().toISOString()
     });
-  });
-
-  app.get("/api/server/power", async (): Promise<AiServerPowerStatus> => readAiServerPowerStatus());
-
-  app.post("/api/server/power/start", async (): Promise<AiServerPowerStatus> => {
-    powerTransition = "starting";
-
-    try {
-      const ollamaReady = await ensureOllamaIsReady(dependencies.ollama.getHealth.bind(dependencies.ollama), () => undefined);
-
-      if (!ollamaReady) {
-        throw new ModelDockError({
-          code: "AI_SERVER_OLLAMA_START_FAILED",
-          module: "server-power",
-          message: "Ollama could not be started"
-        });
-      }
-
-      const baseUrl = resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl);
-      const chatHealth = await getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch);
-
-      if (chatHealth.status !== "available") {
-        const preparedRuntimeAvailable = (await openWebUIRuntime.prepareManagedRuntime?.()) ?? false;
-
-        if (!preparedRuntimeAvailable) {
-          await ensureUvIsAvailable(openWebUIRuntime);
-        }
-
-        const startResult = await openWebUIRuntime.start({
-          dataDir: openWebUIRuntime.getDataDir(),
-          port: new URL(baseUrl).port ? Number(new URL(baseUrl).port) : 8080
-        });
-
-        if (!startResult.started) {
-          throw new ModelDockError({
-            code: "AI_SERVER_CHAT_START_FAILED",
-            module: "server-power",
-            message: startResult.message
-          });
-        }
-
-        await waitForManagedChat({
-          clock: dependencies.clock,
-          fetchImpl: options.openWebUIFetch ?? fetch,
-          getRuntimeLog: openWebUIRuntime.getLog,
-          isRuntimeAlive: openWebUIRuntime.isStartedByModelDock,
-          update: () => undefined,
-          url: baseUrl
-        });
-      }
-
-      options.openWebUIBaseUrl = baseUrl;
-      // The chat listens on loopback, so publishing it to the tailnet is what
-      // makes invited devices able to reach it at all.
-      await publishChatToTailnet(readPortFromBaseUrl(baseUrl)).catch(() => undefined);
-      await dependencies.auditStore.append({
-        actorId: "system",
-        action: "AI_SERVER_STARTED",
-        module: "server-power",
-        result: "success",
-        correlationId: "server-power-start",
-        resourceType: "server",
-        resourceId: "local"
-      });
-    } finally {
-      powerTransition = null;
-    }
-
-    return readAiServerPowerStatus();
-  });
-
-  app.post("/api/server/power/stop", async (): Promise<AiServerPowerStatus> => {
-    powerTransition = "stopping";
-
-    try {
-      const runningModels = await dependencies.ollama.listRunningModels().catch(() => []);
-      await Promise.all(runningModels.map((model) => dependencies.ollama.unloadModel({ model: model.name })));
-
-      const chatHealth = await getOpenWebUIHealth(
-        resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl),
-        dependencies.clock,
-        options.openWebUIFetch
-      );
-
-      if (chatHealth.status === "available") {
-        const stopResult = await openWebUIRuntime.stop?.();
-
-        if (!stopResult?.stopped) {
-          throw new ModelDockError({
-            code: "AI_SERVER_CHAT_NOT_MANAGED",
-            module: "server-power",
-            message: "The chat is running outside ModelDock and cannot be stopped safely"
-          });
-        }
-      }
-
-      // Stop advertising the chat as soon as it stops answering, so nobody in
-      // the tailnet is left with a link that fails.
-      await unpublishChatFromTailnet(
-        readPortFromBaseUrl(resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl))
-      ).catch(() => undefined);
-
-      await dependencies.auditStore.append({
-        actorId: "system",
-        action: "AI_SERVER_STOPPED",
-        module: "server-power",
-        result: "success",
-        correlationId: "server-power-stop",
-        resourceType: "server",
-        resourceId: "local"
-      });
-    } finally {
-      powerTransition = null;
-    }
-
-    return readAiServerPowerStatus();
   });
 
   app.get("/api/system/resources", async (): Promise<SystemResources> => {
     const totalBytes = totalmem();
     const freeBytes = freemem();
     const usedBytes = Math.max(totalBytes - freeBytes, 0);
-
     return {
       checkedAt: dependencies.clock.now().toISOString(),
-      memory: {
-        totalBytes,
-        freeBytes,
-        usedBytes,
-        usedRatio: totalBytes > 0 ? usedBytes / totalBytes : 0
-      },
-      gpu: {
-        status: "not_configured",
-        message: "GPU telemetry adapter is not configured yet"
-      },
-      inferenceProjection: {
-        tokensPerSecond: {
-          min: 18,
-          max: 34
-        },
-        confidence: "estimated",
-        message: "Projection based on the current fake model profile; real probes will replace this later"
-      }
+      memory: { totalBytes, freeBytes, usedBytes, usedRatio: totalBytes > 0 ? usedBytes / totalBytes : 0 },
+      cpu: { model: cpus()[0]?.model.trim() ?? "", cores: cpus().length }
     };
   });
 
-  app.get("/api/system/events", async (): Promise<AuditEvent[]> => dependencies.auditStore.list());
-
-  app.get("/api/models", async () => {
-    const models = await dependencies.ollama.listLocalModels();
-
-    await syncModelPoliciesWithRuntimeState(dependencies, models);
-
-    return models;
-  });
-  app.get("/api/integrations/ollama/status", async () => dependencies.ollama.getHealth());
-  app.get("/api/integrations/open-webui/status", async () => getOpenWebUIHealth(options.openWebUIBaseUrl, dependencies.clock, options.openWebUIFetch));
-
-  app.get("/api/setup/server", async (): Promise<ManagedServerSetupStatus> => {
-    if (managedServerSetup.state === "idle" && options.openWebUIApiKey?.trim() && options.openWebUIBaseUrl?.trim()) {
-      const baseUrl = normalizeBaseUrl(options.openWebUIBaseUrl);
-
-      if (baseUrl) {
-        const health = await getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch);
-
-        if (health.status === "available") {
-          const adminCheck = await verifyOpenWebUIAdminAccess({
-            apiKey: options.openWebUIApiKey,
-            baseUrl,
-            fetchImpl: options.openWebUIFetch ?? fetch
-          });
-
-          if (adminCheck.adminVerified) {
-            managedServerSetup = {
-              state: "succeeded",
-              phase: "ready",
-              progress: 100,
-              message: "The existing local AI server and administrator chat are ready.",
-              ollamaReady: (await dependencies.ollama.getHealth()).status === "available",
-              chatReady: true,
-              adminReady: true,
-              chatUrl: baseUrl,
-              updatedAt: dependencies.clock.now().toISOString()
-            };
-          }
-        }
-      }
-    }
-
-    return managedServerSetup;
-  });
-
-  app.post<{ Body: { adminEmail?: string; adminName?: string; adminPassword?: string } }>("/api/setup/server", async (request, reply) => {
-    const adminEmail = request.body.adminEmail?.trim().toLowerCase();
-    const adminName = request.body.adminName?.trim();
-    const adminPassword = request.body.adminPassword;
-
-    if (!adminName || !adminEmail || !adminEmail.includes("@") || !adminPassword || adminPassword.length < 8) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "setup",
-        message: "Name, a valid email and a password of at least 8 characters are required"
-      });
-    }
-
-    if (managedServerSetup.state === "running") {
-      return reply.status(202).send(managedServerSetup);
-    }
-
-    const startedAt = dependencies.clock.now().toISOString();
-    managedServerSetup = {
-      state: "running",
-      phase: "checking",
-      progress: 5,
-      message: "Checking the components already available on this computer.",
-      ollamaReady: false,
-      chatReady: false,
-      adminReady: false,
-      chatUrl: "http://127.0.0.1:8080",
-      startedAt,
-      updatedAt: startedAt
-    };
-
-    void runManagedServerSetup({
-      admin: { email: adminEmail, name: adminName, password: adminPassword },
-      clock: dependencies.clock,
-      fetchImpl: options.openWebUIFetch ?? fetch,
-      getOllamaHealth: () => dependencies.ollama.getHealth(),
-      localEnvPath: options.localEnvPath,
-      openWebUIRuntime,
-      publishChat: publishChatToTailnet,
-      update(next) {
-        managedServerSetup = {
-          ...managedServerSetup,
-          ...next,
-          updatedAt: dependencies.clock.now().toISOString()
-        };
-      }
-    })
-      .then(async (result) => {
-        options.openWebUIApiKey = result.apiKey;
-        options.openWebUIBaseUrl = result.baseUrl;
-        managedServerSetup = {
-          ...managedServerSetup,
-          state: "succeeded",
-          phase: "ready",
-          progress: 100,
-          message: result.shareUrl
-            ? "The local AI server and administrator chat are ready."
-            : `The local AI server is ready, but the chat is not published to your private network yet. ${result.exposureMessage ?? ""}`.trim(),
-          ollamaReady: true,
-          chatReady: true,
-          adminReady: true,
-          // Prefer the tailnet URL: it is the one a guest can actually open.
-          chatUrl: result.shareUrl ?? result.baseUrl,
-          updatedAt: dependencies.clock.now().toISOString()
-        };
-      })
-      .catch((error) => {
-        managedServerSetup = {
-          ...managedServerSetup,
-          state: "failed",
-          phase: "failed",
-          message: error instanceof Error ? error.message : "Server preparation failed.",
-          updatedAt: dependencies.clock.now().toISOString()
-        };
-      });
-
-    return reply.status(202).send(managedServerSetup);
-  });
-
-  app.get("/api/setup/ollama", async (): Promise<OllamaSetupStatus> => {
-    const [health, models] = await Promise.all([
-      dependencies.ollama.getHealth(),
-      dependencies.ollama.listLocalModels().catch(() => [])
-    ]);
+  app.get("/api/system/ollama", async (): Promise<OllamaSetupStatus> => {
+    const [health, models] = await Promise.all([dependencies.ollama.getHealth(), dependencies.ollama.listLocalModels().catch(() => [])]);
     const modelsPath = resolveOllamaModelsPath(options);
-
     return {
       health,
       modelsPath: modelsPath.path,
@@ -635,302 +214,72 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       modelCount: models.length,
       apiBaseUrl: options.ollamaBaseUrl ?? "http://127.0.0.1:11434",
       apiExposesModelsPath: false,
-      message:
-        health.status === "available"
-          ? `Ollama is reachable. ${models.length} local model${models.length === 1 ? "" : "s"} detected.`
-          : health.message
+      message: health.status === "available" ? `Ollama is reachable. ${models.length} local model${models.length === 1 ? "" : "s"}.` : health.message
     };
   });
 
-  app.get("/api/setup/tailscale", async (): Promise<TailscaleSetupStatus> => {
-    let health = await dependencies.tailscaleLocal.getLocalStatus();
-    const accessDenied = getBooleanDetail(health, "accessDenied");
+  app.get("/api/server/power", async (): Promise<AiServerPowerStatus> => readPowerStatus());
 
-    if (accessDenied) {
-      const apiFallback = await findCurrentMachineThroughTailscaleApi(dependencies);
-
-      if (apiFallback) {
-        health = apiFallback;
+  /** Starts Ollama, installing it first where the system allows (winget, Homebrew). */
+  app.post("/api/server/power/start", async (request): Promise<AiServerPowerStatus> => {
+    powerTransition = "starting";
+    try {
+      if (!(await ensureOllamaIsReady(() => dependencies.ollama.getHealth()))) {
+        throw new ModelDockError({
+          code: "AI_SERVER_OLLAMA_START_FAILED",
+          module: "server-power",
+          message: "Ollama could not be started",
+          suggestion: "Install Ollama from ollama.com, then try again.",
+          httpStatus: 502
+        });
       }
-    }
-
-    const tailnetIp = getStringDetail(health, "tailnetIp");
-    const addresses = getStringArrayDetail(health, "addresses");
-    const normalizedAddresses = addresses.length > 0 ? addresses : tailnetIp ? [tailnetIp] : [];
-    const backendState = getStringDetail(health, "backendState");
-    const tailnet = getStringDetail(health, "tailnet");
-    const hostname = getStringDetail(health, "hostname");
-    const localAccessDenied = getBooleanDetail(health, "accessDenied");
-    const installed = health.status !== "unavailable" || accessDenied;
-    const loggedIn = health.status === "available";
-    const suggestedServerUrl = normalizedAddresses[0] ? `http://${normalizedAddresses[0]}:4173` : undefined;
-
-    return {
-      health,
-      installed,
-      loggedIn,
-      backendState,
-      tailnet,
-      hostname,
-      addresses: normalizedAddresses,
-      suggestedServerUrl,
-      apiRequiredForDeviceWrites: true,
-      message: buildTailscaleSetupMessage({ accessDenied: localAccessDenied, health, installed, loggedIn, suggestedServerUrl })
-    };
-  });
-
-  app.post("/api/setup/tailscale/login", async () => startTailscaleLoginForCurrentPlatform());
-
-  app.get("/api/settings/tailscale-api", async (): Promise<TailscaleApiConnectionStatus> => {
-    const configured = Boolean(options.tailscaleApiToken?.trim()) || (options.tailscaleMode ?? "fake") === "fake";
-
-    if (!configured) {
-      return {
-        configured: false,
-        connected: false,
-        message: "A Tailscale API key is required to create and manage invitations."
-      };
-    }
-
-    const health = await getTailscaleManagementGateway().getLocalStatus();
-    return {
-      configured: true,
-      connected: health.status === "available",
-      message: health.message
-    };
-  });
-
-  app.post<{ Body: { apiToken?: string } }>("/api/settings/tailscale-api", async (request): Promise<TailscaleApiConnectionStatus> => {
-    const apiToken = request.body.apiToken?.trim();
-
-    if (!apiToken || apiToken.length < 12) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "tailscale-adapter",
-        message: "A valid Tailscale API key is required"
+      await dependencies.auditStore.append({
+        actorId: request.account?.id ?? "system",
+        action: "AI_SERVER_STARTED",
+        module: "server-power",
+        result: "success",
+        correlationId: request.id,
+        resourceType: "server",
+        resourceId: "local"
       });
+    } finally {
+      powerTransition = null;
     }
-
-    options.tailscaleApiToken = apiToken;
-    await upsertLocalEnvValues({ MODELDOCK_TAILSCALE_API_TOKEN: apiToken }, options.localEnvPath);
-    const health = await getTailscaleManagementGateway().getLocalStatus();
-
-    return {
-      configured: true,
-      connected: health.status === "available",
-      message: health.message
-    };
+    return readPowerStatus();
   });
 
-  app.get<{ Querystring: { baseUrl?: string } }>("/api/setup/open-webui", async (request): Promise<OpenWebUISetupStatus> => {
-    const baseUrl = normalizeBaseUrl(request.query.baseUrl) ?? normalizeBaseUrl(options.openWebUIBaseUrl);
-    const health = await getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch);
-    const apiKey = options.openWebUIApiKey?.trim();
-    const apiKeyConfigured = Boolean(apiKey);
-
-    if (!baseUrl) {
-      return {
-        health,
-        reachable: false,
-        apiKeyConfigured,
-        adminVerified: false,
-        message: "Open WebUI URL is not configured yet."
-      };
-    }
-
-    if (health.status !== "available") {
-      return {
-        health,
-        baseUrl,
-        reachable: false,
-        apiKeyConfigured,
-        adminVerified: false,
-        message: health.message
-      };
-    }
-
-    if (!apiKey) {
-      return {
-        health,
-        baseUrl,
-        reachable: true,
-        apiKeyConfigured: false,
-        adminVerified: false,
-        message: "Open WebUI is reachable. Configure an admin API key to enable user and permission management."
-      };
-    }
-
-    const adminCheck = await verifyOpenWebUIAdminAccess({
-      apiKey,
-      baseUrl,
-      fetchImpl: options.openWebUIFetch ?? fetch
+  /** Unloads every model from memory. Ollama stays on: the next message loads its model again. */
+  app.post("/api/server/release-memory", async (request): Promise<AiServerPowerStatus> => {
+    const running = await dependencies.ollama.listRunningModels().catch(() => []);
+    await Promise.all(running.map((model) => dependencies.ollama.unloadModel({ model: model.name })));
+    await dependencies.auditStore.append({
+      actorId: request.account?.id ?? "system",
+      action: "AI_SERVER_MEMORY_RELEASED",
+      module: "server-power",
+      result: "success",
+      correlationId: request.id,
+      resourceType: "server",
+      resourceId: "local"
     });
-
-    return {
-      health: adminCheck.health ?? health,
-      baseUrl,
-      reachable: true,
-      apiKeyConfigured: true,
-      adminVerified: adminCheck.adminVerified,
-      authenticatedUser: adminCheck.authenticatedUser,
-      modelCount: adminCheck.modelCount,
-      message: adminCheck.message
-    };
+    return readPowerStatus();
   });
 
-  app.get<{ Querystring: { baseUrl?: string; installPath?: string } }>("/api/setup/open-webui/runtime", async (request): Promise<OpenWebUIRuntimeStatus> => {
-    const baseUrl = resolveOpenWebUIBaseUrl(request.query.baseUrl, options.openWebUIBaseUrl);
-
-    return getOpenWebUIRuntimeStatus({
-      baseUrl,
-      clock: dependencies.clock,
-      fetchImpl: options.openWebUIFetch,
-      installPath: request.query.installPath,
-      runtime: openWebUIRuntime
-    });
+  app.get("/api/models", async () => {
+    const models = await dependencies.ollama.listLocalModels();
+    await syncModelPoliciesWithRuntimeState(dependencies, models);
+    return models;
   });
 
-  app.post<{ Body: { baseUrl?: string; installPath?: string } }>("/api/setup/open-webui/start", async (request): Promise<OpenWebUIRuntimeStatus> => {
-    const baseUrl = resolveOpenWebUIBaseUrl(request.body.baseUrl, options.openWebUIBaseUrl);
-    const url = new URL(baseUrl);
-    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
-    const dataDir = openWebUIRuntime.getDataDir();
-    const localInstall = resolveOpenWebUILocalInstall(request.body.installPath);
-    const currentStatus = await getOpenWebUIRuntimeStatus({
-      baseUrl,
-      clock: dependencies.clock,
-      fetchImpl: options.openWebUIFetch,
-      installPath: request.body.installPath,
-      runtime: openWebUIRuntime
-    });
+  app.get("/api/models/running", async () => dependencies.ollama.listRunningModels());
 
-    if (currentStatus.running) {
-      options.openWebUIBaseUrl = baseUrl;
-      return currentStatus;
-    }
-
-    if (!localInstall.installed) {
-      const preparedRuntimeAvailable = (await openWebUIRuntime.prepareManagedRuntime?.()) ?? false;
-
-      if (!preparedRuntimeAvailable) {
-        await ensureUvIsAvailable(openWebUIRuntime);
-      }
-    }
-
-    const startResult = await openWebUIRuntime.start({
-      dataDir,
-      executablePath: localInstall.executablePath,
-      installPath: localInstall.installPath,
-      port
-    });
-    options.openWebUIBaseUrl = baseUrl;
-
-    if (!startResult.started) {
-      const uvAvailable = await openWebUIRuntime.isUvAvailable();
-      const managedRuntimeAvailable = openWebUIRuntime.hasPreparedRuntime?.() ?? false;
-
-      return {
-        health: createComponentHealth(
-          {
-            name: "open-webui",
-            status: "unavailable",
-            message: startResult.message,
-            details: { baseUrl }
-          },
-          dependencies.clock
-        ),
-        baseUrl,
-        dataDir,
-        executablePath: localInstall.executablePath,
-        installPath: localInstall.installPath,
-        installed: localInstall.installed,
-        port,
-        managedRuntimeAvailable,
-        uvAvailable,
-        running: false,
-        startedByModelDock: openWebUIRuntime.isStartedByModelDock(),
-        state: managedRuntimeAvailable || uvAvailable ? "not_running" : "tool_missing",
-        log: openWebUIRuntime.getLog(),
-        message: startResult.message
-      };
-    }
-
-    return getOpenWebUIRuntimeStatus({
-      baseUrl,
-      clock: dependencies.clock,
-      fetchImpl: options.openWebUIFetch,
-      installPath: request.body.installPath,
-      runtime: openWebUIRuntime
-    });
-  });
-
-  app.post<{ Body: { apiKey?: string; baseUrl?: string } }>("/api/setup/open-webui/api-key", async (request): Promise<OpenWebUISetupStatus> => {
-    const apiKey = request.body.apiKey?.trim();
-    const baseUrl = normalizeBaseUrl(request.body.baseUrl) ?? normalizeBaseUrl(options.openWebUIBaseUrl);
-
-    if (!apiKey) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "open-webui",
-        message: "Open WebUI API key is required"
-      });
-    }
-
-    if (!baseUrl) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "open-webui",
-        message: "Open WebUI URL is required before saving the API key"
-      });
-    }
-
-    await upsertLocalEnvValues(
-      {
-        MODELDOCK_OPENWEBUI_API_KEY: apiKey,
-        MODELDOCK_OPENWEBUI_BASE_URL: baseUrl
-      },
-      options.localEnvPath
-    );
-
-    options.openWebUIApiKey = apiKey;
-    options.openWebUIBaseUrl = baseUrl;
-
-    const health = await getOpenWebUIHealth(baseUrl, dependencies.clock, options.openWebUIFetch);
-
-    if (health.status !== "available") {
-      return {
-        health,
-        baseUrl,
-        reachable: false,
-        apiKeyConfigured: true,
-        adminVerified: false,
-        message: health.message
-      };
-    }
-
-    const adminCheck = await verifyOpenWebUIAdminAccess({
-      apiKey,
-      baseUrl,
-      fetchImpl: options.openWebUIFetch ?? fetch
-    });
-
-    return {
-      health: adminCheck.health ?? health,
-      baseUrl,
-      reachable: true,
-      apiKeyConfigured: true,
-      adminVerified: adminCheck.adminVerified,
-      authenticatedUser: adminCheck.authenticatedUser,
-      modelCount: adminCheck.modelCount,
-      message: adminCheck.message
-    };
+  app.post<{ Params: { name: string } }>("/api/models/:name/unload", async (request) => {
+    await dependencies.ollama.unloadModel({ model: request.params.name });
+    return { unloaded: true };
   });
 
   app.get("/api/access/model-policies", async () => {
     const models = await dependencies.ollama.listLocalModels().catch(() => []);
-
     await syncModelPoliciesWithRuntimeState(dependencies, models);
-
     return {
       users: await dependencies.modelAccess.listUsers(),
       groups: await dependencies.modelAccess.listGroups(),
@@ -938,65 +287,44 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     };
   });
 
-  app.put<{
-    Body: {
-      modelName?: string;
-      enabled?: boolean;
-      loaded?: boolean;
-      groupGrants?: Record<string, boolean>;
-    };
-  }>("/api/access/model-policies", async (request) => {
-    const modelName = request.body.modelName?.trim();
-
-    if (!modelName) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "access-control",
-        message: "Model name is required"
-      });
-    }
-
-    await dependencies.modelAccess.ensurePolicy(modelName);
-
-    if (typeof request.body.loaded === "boolean") {
-      if (request.body.loaded) {
-        await dependencies.ollama.loadModel({ model: modelName });
-      } else {
-        await dependencies.ollama.unloadModel({ model: modelName });
+  app.put<{ Body: { modelName?: string; enabled?: boolean; loaded?: boolean; groupGrants?: Record<string, boolean> } }>(
+    "/api/access/model-policies",
+    async (request) => {
+      const modelName = request.body.modelName?.trim();
+      if (!modelName) {
+        throw new ModelDockError({ code: "INVALID_INPUT", module: "access-control", message: "Model name is required" });
       }
+
+      await dependencies.modelAccess.ensurePolicy(modelName);
+      if (typeof request.body.loaded === "boolean") {
+        if (request.body.loaded) await dependencies.ollama.loadModel({ model: modelName });
+        else await dependencies.ollama.unloadModel({ model: modelName });
+      }
+
+      const policy = await dependencies.modelAccess.updatePolicy({
+        modelName,
+        enabled: request.body.enabled,
+        loaded: request.body.loaded,
+        groupGrants: request.body.groupGrants
+      });
+      await dependencies.auditStore.append({
+        actorId: request.account?.id ?? "system",
+        action: "MODEL_ACCESS_POLICY_UPDATED",
+        module: "access-control",
+        result: "success",
+        correlationId: request.id,
+        resourceType: "model",
+        resourceId: modelName
+      });
+      return policy;
     }
-
-    const policy = await dependencies.modelAccess.updatePolicy({
-      modelName,
-      enabled: request.body.enabled,
-      loaded: request.body.loaded,
-      groupGrants: request.body.groupGrants
-    });
-
-    await dependencies.auditStore.append({
-      actorId: "system",
-      action: "MODEL_ACCESS_POLICY_UPDATED",
-      module: "access-control",
-      result: "success",
-      correlationId: request.id,
-      resourceType: "model",
-      resourceId: modelName
-    });
-
-    return policy;
-  });
+  );
 
   app.post<{ Body: { name?: string } }>("/api/models/pull", async (request, reply) => {
     const name = request.body.name?.trim();
-
     if (!name) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "models",
-        message: "Model name is required"
-      });
+      throw new ModelDockError({ code: "INVALID_INPUT", module: "models", message: "Model name is required" });
     }
-
     const job: ModelPullJob = {
       id: dependencies.ids.createId("pull"),
       model: name,
@@ -1005,33 +333,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       createdAt: dependencies.clock.now().toISOString(),
       updatedAt: dependencies.clock.now().toISOString()
     };
-
     modelPullJobs.set(job.id, job);
     void runModelPullJob(dependencies, modelPullJobs, job.id, request.id);
-
     return reply.status(202).send(job);
   });
 
   app.get<{ Params: { jobId: string } }>("/api/models/pull-jobs/:jobId", async (request) => {
     const job = modelPullJobs.get(request.params.jobId);
-
     if (!job) {
-      throw new ModelDockError({
-        code: "MODEL_PULL_JOB_NOT_FOUND",
-        module: "models",
-        message: `No pull job exists with id ${request.params.jobId}`
-      });
+      throw new ModelDockError({ code: "MODEL_PULL_JOB_NOT_FOUND", module: "models", message: `No pull job exists with id ${request.params.jobId}`, httpStatus: 404 });
     }
-
     return job;
   });
 
   app.delete<{ Params: { name: string } }>("/api/models/:name", async (request) => {
     await dependencies.ollama.deleteModel(request.params.name);
     await dependencies.modelAccess.deletePolicy(request.params.name);
-
     await dependencies.auditStore.append({
-      actorId: "system",
+      actorId: request.account?.id ?? "system",
       action: "MODEL_DELETE_SUCCEEDED",
       module: "models",
       result: "success",
@@ -1039,140 +358,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       resourceType: "model",
       resourceId: request.params.name
     });
-
     return { deleted: true };
   });
 
   app.post<{ Params: { name: string }; Body: { prompt?: string } }>("/api/models/:name/probe", async (request) =>
     dependencies.ollama.probeModel({
       model: request.params.name,
-      prompt: request.body.prompt ?? "Say hello from ModelDock diagnostics."
+      prompt: request.body?.prompt ?? "Say hello from ModelDock diagnostics."
     })
   );
 
-  app.get("/api/network/tailscale/status", async () => dependencies.tailscale.getLocalStatus());
-  app.get("/api/network/tailscale/devices", async () => getTailscaleManagementGateway().listDevices().catch(() => []));
-  app.post<{ Body: { email?: string } }>("/api/network/tailscale/invites", async (request): Promise<TailnetUserInvite> => {
-    const email = request.body.email?.trim().toLowerCase();
-
-    if (email && !email.includes("@")) {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "tailscale-adapter",
-        message: "A valid email address is required when an email is provided"
-      });
-    }
-
-    const invite = await getTailscaleManagementGateway().createUserInvite({ email, role: "member" });
-
-    await dependencies.auditStore.append({
-      actorId: "system",
-      action: "TAILSCALE_USER_INVITE_CREATED",
-      module: "network",
-      result: "success",
-      correlationId: request.id,
-      resourceType: "tailnet-user-invite",
-      resourceId: invite.id
-    });
-
-    return invite;
-  });
-  app.get("/api/network/tailscale/chat-exposure", async (): Promise<TailnetChatExposure> => {
-    const port = readPortFromBaseUrl(resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl));
-
-    if (tailscaleIsSimulated) {
-      return { active: false, mode: "none", port, message: "Tailscale is running in simulated mode, so the chat is not published." };
-    }
-
-    return readChatExposure(port).catch(() => ({
-      active: false,
-      mode: "none" as const,
-      port,
-      message: "The private-network status of the chat could not be read."
-    }));
-  });
-
-  app.post("/api/network/tailscale/chat-exposure", async (request): Promise<TailnetChatExposure> => {
-    const port = readPortFromBaseUrl(resolveOpenWebUIBaseUrl(undefined, options.openWebUIBaseUrl));
-    const exposure = await publishChatToTailnet(port);
-
-    await dependencies.auditStore.append({
-      actorId: "system",
-      action: exposure.active ? "TAILSCALE_CHAT_EXPOSED" : "TAILSCALE_CHAT_EXPOSE_FAILED",
-      module: "network",
-      result: exposure.active ? "success" : "failure",
-      correlationId: request.id,
-      resourceType: "tailnet-serve",
-      resourceId: String(port)
-    });
-
-    return exposure;
-  });
-
-  app.post<{ Body: { chatUrl?: string; label?: string } }>("/api/network/tailscale/auth-keys", async (request) => {
-    const label = request.body.label?.trim() || "ModelDock client invite";
-    const authKey = await getTailscaleManagementGateway().createAuthKey({
-      description: label,
-      reusable: false,
-      // Persistent device (not ephemeral) so a recurring guest's laptop stays in
-      // the tailnet after it goes offline; the key itself is still single-use.
-      ephemeral: false,
-      preauthorized: true,
-      expirySeconds: 3600
-    });
-
-    await dependencies.auditStore.append({
-      actorId: "system",
-      action: "TAILSCALE_AUTH_KEY_CREATED",
-      module: "network",
-      result: "success",
-      correlationId: request.id,
-      resourceType: "tailnet-auth-key",
-      resourceId: authKey.id
-    });
-
-    const chatUrl = request.body.chatUrl?.trim();
-    const clientMessage = buildClientInviteMessage(authKey.key, chatUrl);
-    const scripts = {
-      windows: buildClientInviteScript("windows", authKey.key, chatUrl),
-      macos: buildClientInviteScript("macos", authKey.key, chatUrl)
-    };
-
-    return { ...authKey, chatUrl: chatUrl ?? null, clientMessage, scripts };
-  });
-  app.put<{ Params: { deviceId: string }; Body: { authorized?: boolean } }>("/api/network/tailscale/devices/:deviceId", async (request) => {
-    if (typeof request.body.authorized !== "boolean") {
-      throw new ModelDockError({
-        code: "INVALID_INPUT",
-        module: "tailscale-adapter",
-        message: "Device authorization state is required"
-      });
-    }
-
-    const device = await getTailscaleManagementGateway().updateDeviceAuthorization({
-      deviceId: request.params.deviceId,
-      authorized: request.body.authorized
-    });
-
-    await dependencies.auditStore.append({
-      actorId: "system",
-      action: "TAILSCALE_DEVICE_AUTHORIZATION_UPDATED",
-      module: "network",
-      result: "success",
-      correlationId: request.id,
-      resourceType: "tailnet-device",
-      resourceId: request.params.deviceId
-    });
-
-    return device;
-  });
-
-  app.get("/api/diagnostics/checks", async () =>
-    diagnostics.list().map((check) => ({
-      id: check.id,
-      label: check.label
-    }))
-  );
+  app.get("/api/diagnostics/checks", async () => diagnostics.list().map((check) => ({ id: check.id, label: check.label })));
 
   app.post<{ Params: { checkId: string } }>("/api/diagnostics/checks/:checkId/run", async (request): Promise<DiagnosticCheckResult> =>
     diagnostics.run(request.params.checkId)
@@ -1181,7 +377,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.post("/api/diagnostics/run-all", async (request): Promise<DiagnosticCheckResult[]> => {
     const results = await diagnostics.runAll();
     await dependencies.auditStore.append({
-      actorId: "system",
+      actorId: request.account?.id ?? "system",
       action: "DIAGNOSTIC_RUN_ALL",
       module: "diagnostics",
       result: "success",
@@ -1192,53 +388,40 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.get("/api/audit/events", async (): Promise<AuditEvent[]> => dependencies.auditStore.list());
 
-  app.setErrorHandler(async (error, request, reply) => {
-    if (error instanceof ModelDockError) {
-      await reply.status(error.httpStatus).send({
-        error: {
-          code: error.code,
-          message: error.message,
-          module: error.module,
-          suggestion: error.suggestion,
-          correlationId: request.id
-        }
-      });
-      return;
-    }
-
-    const httpError = error as { statusCode?: unknown; message?: unknown };
-    const statusCode = typeof httpError.statusCode === "number" ? httpError.statusCode : 500;
-    const message = typeof httpError.message === "string" ? httpError.message : "HTTP request error";
-
-    if (statusCode < 500) {
-      await reply.status(statusCode).send({
-        error: {
-          code: "HTTP_REQUEST_ERROR",
-          message,
-          module: "api",
-          correlationId: request.id
-        }
-      });
-      return;
-    }
-
-    request.log.error({ error }, "Unhandled ModelDock API error");
-    await reply.status(500).send({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Unexpected ModelDock API error",
-        module: "api",
-        correlationId: request.id
-      }
-    });
-  });
-
   return app;
 }
 
+async function startLink(options: LinkOptions): Promise<LinkRuntime> {
+  const identity = await loadOrCreateIdentity(options.dataDir);
+  const registry = new LinkRegistry(new FileStateStore(join(options.dataDir, "state.json")));
+  const server = await startLinkServer({
+    identity,
+    registry,
+    upstream: { host: "127.0.0.1", port: options.upstreamPort },
+    listen: { host: options.listenHost ?? "0.0.0.0", port: options.port },
+    allowUnpairedBrowsers: options.allowUnpairedBrowsers
+  });
+  return { identity, registry, server, allowUnpairedBrowsers: options.allowUnpairedBrowsers };
+}
+
+function linkHealth(link: LinkRuntime, clock: Clock): ComponentHealth {
+  const addresses = listLanAddresses();
+  return createComponentHealth(
+    addresses.length > 0
+      ? {
+          name: "link",
+          status: "available",
+          message: `Reachable on the local network at ${addresses.map((address) => `${address}:${link.server.port}`).join(", ")}`,
+          details: { port: link.server.port, addresses }
+        }
+      : { name: "link", status: "degraded", message: "Running, but this computer is not on a local network: no device can reach it." },
+    clock
+  );
+}
+
 /**
- * Accounts always sit on SQLite. With a file, permissions and the audit log move
- * there too and stop being demo data; without one (tests) they stay fake.
+ * Accounts and conversations always sit on SQLite. With a file, permissions and the audit
+ * log move there too and stop being demo data; without one (tests) they stay fake.
  */
 function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes: T, databasePath: string | undefined) {
   const persistent = Boolean(databasePath);
@@ -1262,783 +445,43 @@ function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes:
 }
 
 function createRuntimeDependencies(options: BuildAppOptions): RuntimeDependencies {
-  const dependencies = createBaseRuntimeDependencies(options);
-  return options.ollamaGateway ? { ...dependencies, ollama: options.ollamaGateway } : dependencies;
-}
-
-function createBaseRuntimeDependencies(options: BuildAppOptions): RuntimeDependencies {
   const dependencies = withStorage(createFakeDependencies(), options.databasePath);
   const ollamaMode = options.ollamaMode ?? "fake";
-  const tailscaleMode = options.tailscaleMode ?? "fake";
 
-  if (ollamaMode === "fake" && tailscaleMode === "fake") {
-    return {
-      ...dependencies,
-      tailscaleLocal: dependencies.tailscale
-    };
-  }
+  if (options.ollamaGateway) return { ...dependencies, ollama: options.ollamaGateway };
+  if (ollamaMode === "fake") return dependencies;
 
-  const clock = {
-    now: () => new Date()
-  };
-
+  const clock = dependencies.storage.persistent ? dependencies.clock : { now: () => new Date() };
   return {
     ...dependencies,
     clock,
-    ollama: ollamaMode === "fake" ? dependencies.ollama : new OllamaHttpGateway(options.ollamaBaseUrl ?? "http://127.0.0.1:11434", clock),
-    tailscale: createTailscaleGateway({
-      apiBaseUrl: options.tailscaleApiBaseUrl,
-      apiToken: options.tailscaleApiToken,
-      clock,
-      fake: dependencies.tailscale,
-      fetchImpl: options.tailscaleFetch,
-      mode: tailscaleMode,
-      tailnet: options.tailscaleTailnet
-    }),
-    tailscaleLocal: tailscaleMode === "fake" ? dependencies.tailscale : new TailscaleCliGateway(clock)
+    ollama: new OllamaHttpGateway(options.ollamaBaseUrl ?? "http://127.0.0.1:11434", clock)
   };
 }
 
-function createTailscaleGateway({
-  apiBaseUrl,
-  apiToken,
-  clock,
-  fake,
-  fetchImpl,
-  mode,
-  tailnet
-}: {
-  apiBaseUrl?: string;
-  apiToken?: string;
-  clock: Clock;
-  fake: TailscaleGateway;
-  fetchImpl?: typeof fetch;
-  mode: TailscaleRuntimeMode;
-  tailnet?: string;
-}): TailscaleGateway {
-  if (mode === "fake") {
-    return fake;
-  }
-
-  if (mode === "api" || (mode === "auto" && apiToken?.trim())) {
-    return new TailscaleApiGateway({
-      apiToken,
-      baseUrl: apiBaseUrl,
-      clock,
-      fetchImpl,
-      tailnet
-    });
-  }
-
-  return new TailscaleCliGateway(clock);
-}
-
-function resolveOllamaModelsPath(options: Pick<BuildAppOptions, "ollamaModelsPath">): {
-  path: string;
-  source: OllamaSetupStatus["pathSource"];
-} {
+function resolveOllamaModelsPath(options: Pick<BuildAppOptions, "ollamaModelsPath">): { path: string; source: OllamaSetupStatus["pathSource"] } {
   const configuredPath = options.ollamaModelsPath?.trim();
-
-  if (configuredPath) {
-    return {
-      path: configuredPath,
-      source: "modeldock_env"
-    };
-  }
+  if (configuredPath) return { path: configuredPath, source: "modeldock_env" };
 
   const ollamaEnvPath = process.env.OLLAMA_MODELS?.trim();
+  if (ollamaEnvPath) return { path: ollamaEnvPath, source: "ollama_env" };
 
-  if (ollamaEnvPath) {
-    return {
-      path: ollamaEnvPath,
-      source: "ollama_env"
-    };
-  }
-
-  if (platform() === "linux") {
-    return {
-      path: "/usr/share/ollama/.ollama/models",
-      source: "default"
-    };
-  }
-
-  return {
-    path: join(homedir(), ".ollama", "models"),
-    source: "default"
-  };
+  if (platform() === "linux") return { path: "/usr/share/ollama/.ollama/models", source: "default" };
+  return { path: join(homedir(), ".ollama", "models"), source: "default" };
 }
 
-function getStringDetail(health: ComponentHealth, key: string): string | undefined {
-  const value = health.details?.[key];
-
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function getStringArrayDetail(health: ComponentHealth, key: string): string[] {
-  const value = health.details?.[key];
-
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-}
-
-function getBooleanDetail(health: ComponentHealth, key: string): boolean {
-  return health.details?.[key] === true;
-}
-
-async function findCurrentMachineThroughTailscaleApi(dependencies: RuntimeDependencies): Promise<ComponentHealth | null> {
-  try {
-    const localHostname = getOsHostname();
-    const devices = await dependencies.tailscale.listDevices();
-    const device = findLocalTailnetDevice(devices, localHostname);
-
-    if (!device) {
-      return null;
-    }
-
-    return createComponentHealth(
-      {
-        name: "tailscale",
-        status: device.online === false ? "degraded" : "available",
-        message: device.online === false ? "Tailscale device is registered but appears offline" : "Tailscale is connected",
-        details: {
-          verificationSource: "api_device_match",
-          localStatusAccess: "denied",
-          localHostname,
-          hostname: device.hostname,
-          addresses: device.addresses,
-          authorized: device.authorized,
-          online: device.online,
-          os: device.os
-        }
-      },
-      dependencies.clock
-    );
-  } catch {
-    return null;
-  }
-}
-
-function findLocalTailnetDevice(devices: TailnetDevice[], localHostname: string): TailnetDevice | undefined {
-  const normalizedLocalHostname = normalizeHostname(localHostname);
-
-  return devices.find((device) => normalizeHostname(device.hostname) === normalizedLocalHostname);
-}
-
-function normalizeHostname(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .split(".")[0]!
-    .replace(/[^a-z0-9-]/g, "");
-}
-
-function buildTailscaleSetupMessage({
-  accessDenied,
-  health,
-  installed,
-  loggedIn,
-  suggestedServerUrl
-}: {
-  accessDenied: boolean;
-  health: ComponentHealth;
-  installed: boolean;
-  loggedIn: boolean;
-  suggestedServerUrl?: string;
-}): string {
-  if (!installed) {
-    return "Tailscale is not installed or the CLI is not reachable.";
-  }
-
-  if (accessDenied) {
-    return "Tailscale is installed, but Windows denied access to the local Tailscale status.";
-  }
-
-  if (!loggedIn) {
-    return "Tailscale is installed, but sign-in is not complete on this machine.";
-  }
-
-  if (suggestedServerUrl) {
-    return `Tailscale is connected. Suggested server URL: ${suggestedServerUrl}.`;
-  }
-
-  return health.message;
-}
-
-interface OpenWebUIAuthProfile {
-  id?: string;
-  name?: string;
-  email?: string;
-  role?: string;
-}
-
-interface VerifyOpenWebUIAdminAccessInput {
-  apiKey: string;
-  baseUrl: string;
-  fetchImpl: typeof fetch;
-}
-
-interface VerifyOpenWebUIAdminAccessResult {
-  adminVerified: boolean;
-  authenticatedUser?: OpenWebUISetupStatus["authenticatedUser"];
-  health?: ComponentHealth;
-  modelCount?: number;
-  message: string;
-}
-
-interface GetOpenWebUIRuntimeStatusInput {
-  baseUrl: string;
-  clock: Clock;
-  fetchImpl?: typeof fetch;
-  installPath?: string;
-  runtime: OpenWebUIRuntimeController;
-}
-
-async function getOpenWebUIRuntimeStatus(input: GetOpenWebUIRuntimeStatusInput): Promise<OpenWebUIRuntimeStatus> {
-  const [health, uvAvailable] = await Promise.all([
-    getOpenWebUIHealth(input.baseUrl, input.clock, input.fetchImpl),
-    input.runtime.isUvAvailable()
-  ]);
-  const localInstall = resolveOpenWebUILocalInstall(input.installPath);
-  const running = health.status === "available";
-  const startedByModelDock = input.runtime.isStartedByModelDock();
-  const managedRuntimeAvailable = input.runtime.hasPreparedRuntime?.() ?? false;
-  const installerAvailable = managedRuntimeAvailable || uvAvailable;
-
-  return {
-    health,
-    baseUrl: input.baseUrl,
-    dataDir: input.runtime.getDataDir(),
-    executablePath: localInstall.executablePath,
-    installPath: localInstall.installPath,
-    installed: localInstall.installed,
-    managedRuntimeAvailable,
-    port: readPortFromBaseUrl(input.baseUrl),
-    uvAvailable,
-    running,
-    startedByModelDock,
-    state: running ? "running" : startedByModelDock ? "starting" : installerAvailable ? "not_running" : "tool_missing",
-    log: input.runtime.getLog(),
-    message: running
-      ? "Open WebUI is reachable."
-      : startedByModelDock
-        ? "Open WebUI is starting."
-        : localInstall.installed
-        ? "Open WebUI is installed but not running yet."
-        : installerAvailable
-        ? "Open WebUI is not running yet."
-        : "The installer runtime is not available yet."
-  };
-}
-
-async function getOpenWebUIHealth(baseUrl: string | undefined, clock: Clock, fetchImpl: typeof fetch = fetch): Promise<ComponentHealth> {
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-
-  if (!normalizedBaseUrl) {
-    return createComponentHealth(
-      {
-        name: "open-webui",
-        status: "not_configured",
-        message: "Open WebUI URL is not configured yet"
-      },
-      clock
-    );
-  }
-
-  try {
-    const response = await fetchImpl(normalizedBaseUrl, {
-      method: "GET",
-      signal: AbortSignal.timeout(1500)
-    });
-
-    return createComponentHealth(
-      {
-        name: "open-webui",
-        status: response.ok ? "available" : "degraded",
-        message: response.ok ? "Open WebUI is reachable" : `Open WebUI responded with HTTP ${response.status}`,
-        details: {
-          baseUrl: normalizedBaseUrl,
-          statusCode: response.status
-        }
-      },
-      clock
-    );
-  } catch (error) {
-    return createComponentHealth(
-      {
-        name: "open-webui",
-        status: "unavailable",
-        message: "Open WebUI is not reachable",
-        details: {
-          baseUrl: normalizedBaseUrl,
-          error: error instanceof Error ? error.message : String(error)
-        }
-      },
-      clock
-    );
-  }
-}
-
-async function verifyOpenWebUIAdminAccess(input: VerifyOpenWebUIAdminAccessInput): Promise<VerifyOpenWebUIAdminAccessResult> {
-  const headers = {
-    authorization: `Bearer ${input.apiKey}`,
-    accept: "application/json"
-  };
-
-  try {
-    const profileResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/`, {
-      headers,
-      method: "GET",
-      signal: AbortSignal.timeout(2000)
-    });
-
-    if (profileResponse.status === 401 || profileResponse.status === 403) {
-      return {
-        adminVerified: false,
-        message: "Open WebUI API key is configured but was rejected."
-      };
-    }
-
-    if (!profileResponse.ok) {
-      return {
-        adminVerified: false,
-        message: `Open WebUI auth probe responded with HTTP ${profileResponse.status}.`
-      };
-    }
-
-    const authenticatedUser = (await profileResponse.json()) as OpenWebUIAuthProfile;
-    const isAdmin = authenticatedUser.role === "admin";
-    const modelCount = await readOpenWebUIModelCount(input.baseUrl, headers, input.fetchImpl);
-
-    return {
-      adminVerified: isAdmin,
-      authenticatedUser,
-      modelCount,
-      message: isAdmin
-        ? "Open WebUI admin API access is ready."
-        : "Open WebUI API key is valid, but it does not belong to an admin user."
-    };
-  } catch (error) {
-    return {
-      adminVerified: false,
-      message: `Open WebUI admin API check failed: ${error instanceof Error ? error.message : String(error)}`
-    };
-  }
-}
-
-async function readOpenWebUIModelCount(baseUrl: string, headers: HeadersInit, fetchImpl: typeof fetch): Promise<number | undefined> {
-  try {
-    const response = await fetchImpl(`${baseUrl}/api/models`, {
-      headers,
-      method: "GET",
-      signal: AbortSignal.timeout(2000)
-    });
-
-    if (!response.ok) {
-      return undefined;
-    }
-
-    const payload = (await response.json()) as unknown;
-
-    if (Array.isArray(payload)) {
-      return payload.length;
-    }
-
-    if (payload && typeof payload === "object" && Array.isArray((payload as { data?: unknown }).data)) {
-      return (payload as { data: unknown[] }).data.length;
-    }
-
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizeBaseUrl(baseUrl: string | undefined): string | undefined {
-  const normalizedBaseUrl = baseUrl?.trim().replace(/\/$/, "");
-
-  return normalizedBaseUrl || undefined;
-}
-
-function resolveOpenWebUIBaseUrl(requestedBaseUrl: string | undefined, configuredBaseUrl: string | undefined): string {
-  return normalizeBaseUrl(requestedBaseUrl) ?? normalizeBaseUrl(configuredBaseUrl) ?? "http://127.0.0.1:8080";
-}
-
-function readPortFromBaseUrl(baseUrl: string): number {
-  try {
-    const url = new URL(baseUrl);
-    return Number(url.port || (url.protocol === "https:" ? 443 : 80));
-  } catch {
-    return 8080;
-  }
-}
-
-export function resolveOpenWebUILocalInstall(
-  installPath: string | undefined,
-  platformId: NodeJS.Platform = platform()
-): {
-  executablePath?: string;
-  installPath?: string;
-  installed: boolean;
-} {
-  const normalizedInstallPath = installPath?.trim();
-
-  if (!normalizedInstallPath) {
-    return { installed: false };
-  }
-
-  const candidates = resolveOpenWebUIExecutableCandidates(normalizedInstallPath, platformId);
-  const executablePath = candidates.find((candidate) => existsSync(candidate));
-
-  return {
-    executablePath,
-    installPath: normalizedInstallPath,
-    installed: Boolean(executablePath)
-  };
-}
-
-export function resolveOpenWebUIExecutableCandidates(installPath: string, platformId: NodeJS.Platform = platform()): string[] {
-  if (platformId === "win32") {
-    return [
-      join(installPath, "venv", "Scripts", "open-webui.exe"),
-      join(installPath, ".venv", "Scripts", "open-webui.exe"),
-      join(installPath, "open-webui.exe"),
-      join(installPath, "Scripts", "open-webui.exe")
-    ];
-  }
-
-  return [
-    join(installPath, "venv", "bin", "open-webui"),
-    join(installPath, ".venv", "bin", "open-webui"),
-    join(installPath, "bin", "open-webui"),
-    join(installPath, "open-webui")
-  ];
-}
-
-function createOpenWebUIRuntimeController(): OpenWebUIRuntimeController {
-  const dataDir = resolveOpenWebUIDataDir();
-  const log: string[] = [];
-  let processHandle: ChildProcessWithoutNullStreams | undefined;
-  let preparedRuntime: PreparedOpenWebUIRuntime | undefined;
-
-  function appendLog(line: string) {
-    const normalizedLine = line.trim();
-
-    if (!normalizedLine) {
-      return;
-    }
-
-    log.push(normalizedLine);
-    log.splice(0, Math.max(log.length - 12, 0));
-  }
-
-  return {
-    getDataDir: () => dataDir,
-    getLog: () => [...log],
-    hasPreparedRuntime: () => Boolean(preparedRuntime),
-    isStartedByModelDock: () => Boolean(processHandle && processHandle.exitCode === null && processHandle.signalCode === null),
-    async isUvAvailable() {
-      const result = await runFirstAvailableCommand(resolveUvCommandCandidates(), ["--version"], 2500);
-
-      return result.ok;
-    },
-    async prepareManagedRuntime(onProgress) {
-      if (preparedRuntime) {
-        onProgress?.({ message: "The prepared chat runtime is ready.", percent: 100 });
-        return true;
-      }
-
-      try {
-        preparedRuntime = await prepareOpenWebUIRuntimeBundle({ onProgress });
-
-        if (!preparedRuntime) {
-          appendLog("No prepared Open WebUI runtime is available for this platform. Using the installer fallback.");
-          return false;
-        }
-
-        appendLog(`Prepared Open WebUI runtime ${preparedRuntime.version} is ready for ${preparedRuntime.target}.`);
-        return true;
-      } catch (error) {
-        appendLog(
-          `Prepared Open WebUI runtime is unavailable; using the installer fallback. ${error instanceof Error ? error.message : String(error)}`
-        );
-        preparedRuntime = undefined;
-        return false;
-      }
-    },
-    async stop() {
-      const activeProcess = processHandle;
-
-      if (!activeProcess || activeProcess.exitCode !== null || activeProcess.signalCode !== null) {
-        return { stopped: false, message: "Open WebUI is not running under ModelDock control." };
-      }
-
-      const exited = new Promise<void>((resolve) => activeProcess.once("exit", () => resolve()));
-
-      if (!activeProcess.kill()) {
-        return { stopped: false, message: "ModelDock could not request Open WebUI to stop." };
-      }
-
-      await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
-
-      if (activeProcess.exitCode === null && activeProcess.signalCode === null) {
-        return { stopped: false, message: "Open WebUI did not stop in time." };
-      }
-
-      if (processHandle === activeProcess) {
-        processHandle = undefined;
-      }
-
-      appendLog("Open WebUI was stopped by ModelDock.");
-      return { stopped: true, message: "Open WebUI stopped." };
-    },
-    async start(input) {
-      if (processHandle && processHandle.exitCode === null && processHandle.signalCode === null) {
-        return { started: true, message: "Open WebUI is already starting from ModelDock." };
-      }
-
-      const usePreparedRuntime = Boolean(!input.executablePath && preparedRuntime && !input.compatibilityMode);
-      const command = input.executablePath
-        ? input.executablePath
-        : usePreparedRuntime
-          ? preparedRuntime?.pythonPath
-          : await findAvailableCommand(resolveUvxCommandCandidates());
-
-      if (!command) {
-        appendLog("uvx was not found on this machine.");
-        return { started: false, message: "Open WebUI cannot start because uvx is not available." };
-      }
-
-      if (!input.executablePath) {
-        await mkdir(input.dataDir, { recursive: true });
-      }
-
-      // Bind to loopback only. The chat is reached locally by ModelDock and, for
-      // remote clients, exposed through the private tailnet - never the raw LAN.
-      const serveArgs = ["serve", "--host", "127.0.0.1", "--port", String(input.port)];
-      const runtimeProfile = resolveManagedOpenWebUIRuntimeProfile(platform(), arch(), input.compatibilityMode);
-      const managedArgs = [
-        "--python",
-        "3.11",
-        ...runtimeProfile.extraPackages.flatMap((packageName) => ["--with", packageName]),
-        runtimeProfile.packageSpec,
-        ...serveArgs
-      ];
-      const commandArgs = input.executablePath
-        ? serveArgs
-        : usePreparedRuntime
-          ? ["-c", "from open_webui import app; app()", ...serveArgs]
-          : managedArgs;
-
-      appendLog(
-        input.executablePath
-          ? `Starting Open WebUI from ${input.installPath ?? "local install"}.`
-          : usePreparedRuntime
-            ? `Starting the verified Open WebUI runtime ${preparedRuntime?.version ?? ""}.`
-            : runtimeProfile.profile === "intel-mac"
-              ? `Starting Open WebUI ${OPEN_WEBUI_INTEL_MAC_VERSION}, the compatible runtime for Intel Macs.`
-              : runtimeProfile.profile === "compatibility"
-                ? `Retrying Open WebUI with the compatible ${OPEN_WEBUI_COMPATIBILITY_VERSION} runtime.`
-                : "Starting Open WebUI from ModelDock."
-      );
-      processHandle = spawn(command, commandArgs, {
-        env: {
-          ...process.env,
-          DATA_DIR: input.dataDir,
-          ...resolveManagedOpenWebUIBootstrapEnvironment(),
-          OLLAMA_BASE_URL: "http://127.0.0.1:11434",
-          ...(usePreparedRuntime && preparedRuntime
-            ? {
-                PYTHONPATH: resolvePreparedRuntimePythonPath(
-                  preparedRuntime.sitePackagesPath,
-                  platform(),
-                  process.env.PYTHONPATH
-                )
-              }
-            : {}),
-          PORT: String(input.port)
-        },
-        cwd: input.executablePath ? input.installPath : undefined,
-        windowsHide: true
-      });
-
-      processHandle.stdout.on("data", (chunk) => appendLog(chunk.toString()));
-      processHandle.stderr.on("data", (chunk) => appendLog(chunk.toString()));
-      processHandle.on("error", (error) => appendLog(error.message));
-      processHandle.on("exit", (code) => appendLog(`Open WebUI process exited with code ${code ?? "unknown"}.`));
-
-      return { started: true, message: "Open WebUI startup has been requested." };
-    }
-  };
-}
-
-function createInitialManagedServerSetupStatus(clock: Clock): ManagedServerSetupStatus {
-  return {
-    state: "idle",
-    phase: "idle",
-    progress: 0,
-    message: "The server has not been prepared yet.",
-    ollamaReady: false,
-    chatReady: false,
-    adminReady: false,
-    updatedAt: clock.now().toISOString()
-  };
-}
-
-async function runManagedServerSetup(input: {
-  admin: { email: string; name: string; password: string };
-  clock: Clock;
-  fetchImpl: typeof fetch;
-  getOllamaHealth(): Promise<ComponentHealth>;
-  localEnvPath?: string;
-  openWebUIRuntime: OpenWebUIRuntimeController;
-  publishChat(port: number): Promise<TailnetChatExposure>;
-  update(next: Partial<ManagedServerSetupStatus>): void;
-}): Promise<{ apiKey: string; baseUrl: string; shareUrl?: string; exposureMessage?: string }> {
-  const baseUrl = "http://127.0.0.1:8080";
-
-  input.update({ phase: "checking", progress: 8, message: "Checking Ollama and the local chat runtime." });
-  const ollamaReady = await ensureOllamaIsReady(input.getOllamaHealth, (phase, progress, message) => {
-    input.update({ phase, progress, message });
-  });
-
-  if (!ollamaReady) {
-    throw new Error("Ollama could not be installed or started automatically. Open the system installer and try again.");
-  }
-
-  input.update({ ollamaReady: true, phase: "installing_chat", progress: 48, message: "Preparing the administrator chat." });
-  const preparedRuntimeAvailable =
-    (await input.openWebUIRuntime.prepareManagedRuntime?.((runtimeProgress) => {
-      input.update({
-        phase: "installing_chat",
-        progress: 48 + Math.round(((runtimeProgress.percent ?? 0) / 100) * 14),
-        message: runtimeProgress.message
-      });
-    })) ?? false;
-
-  if (!preparedRuntimeAvailable) {
-    input.update({ phase: "installing_chat", progress: 50, message: "Preparing the compatible chat installer." });
-    await ensureUvIsAvailable(input.openWebUIRuntime);
-  }
-
-  const usesIntelMacRuntime = platform() === "darwin" && arch() === "x64";
-  input.update({
-    phase: "starting_chat",
-    progress: 64,
-    message: usesIntelMacRuntime
-      ? "Intel Mac detected. Starting the compatible local chat runtime."
-      : "Starting the local chat for the first time."
-  });
-  const startResult = await input.openWebUIRuntime.start({
-    dataDir: input.openWebUIRuntime.getDataDir(),
-    port: 8080
-  });
-
-  if (!startResult.started) {
-    throw new Error(startResult.message);
-  }
-
-  let chatReady: boolean;
-
-  try {
-    chatReady = await waitForManagedChat({
-      clock: input.clock,
-      fetchImpl: input.fetchImpl,
-      getRuntimeLog: input.openWebUIRuntime.getLog,
-      isRuntimeAlive: input.openWebUIRuntime.isStartedByModelDock,
-      update: input.update,
-      url: baseUrl
-    });
-  } catch {
-    input.update({
-      phase: "starting_chat",
-      progress: 68,
-      message: "The prepared chat start failed. Retrying with the compatible installer."
-    });
-    const fallbackResult = await input.openWebUIRuntime.start({
-      compatibilityMode: true,
-      dataDir: input.openWebUIRuntime.getDataDir(),
-      port: 8080
-    });
-
-    if (!fallbackResult.started) {
-      throw new Error(fallbackResult.message);
-    }
-
-    chatReady = await waitForManagedChat({
-      clock: input.clock,
-      fetchImpl: input.fetchImpl,
-      getRuntimeLog: input.openWebUIRuntime.getLog,
-      isRuntimeAlive: input.openWebUIRuntime.isStartedByModelDock,
-      update: input.update,
-      url: baseUrl
-    });
-  }
-
-  if (!chatReady) {
-    throw new Error("The chat was started but did not become ready in time. ModelDock can retry without downloading it again.");
-  }
-
-  input.update({ chatReady: true, phase: "configuring_admin", progress: 86, message: "Creating and securing the administrator connection." });
-  const apiKey = await provisionOpenWebUIAdmin({
-    admin: input.admin,
-    baseUrl,
-    fetchImpl: input.fetchImpl
-  });
-
-  await upsertLocalEnvValues(
-    {
-      MODELDOCK_OPENWEBUI_API_KEY: apiKey,
-      MODELDOCK_OPENWEBUI_BASE_URL: baseUrl
-    },
-    input.localEnvPath
-  );
-
-  // `baseUrl` stays on loopback: it is how ModelDock talks to the chat.
-  // `shareUrl` is what a guest opens, and it only exists once Tailscale is
-  // publishing the port. If publishing fails there is no remote access at all,
-  // so the failure is surfaced instead of silently falling back to loopback.
-  input.update({ phase: "configuring_admin", progress: 94, message: "Publishing the chat to your private network." });
-  const exposure = await input.publishChat(readPortFromBaseUrl(baseUrl)).catch(() => undefined);
-
-  return { apiKey, baseUrl, shareUrl: exposure?.url, exposureMessage: exposure?.message };
-}
-
-async function ensureOllamaIsReady(
-  getHealth: () => Promise<ComponentHealth>,
-  update: (phase: ManagedServerSetupStatus["phase"], progress: number, message: string) => void
-): Promise<boolean> {
-  if ((await getHealth()).status === "available") {
-    return true;
-  }
+async function ensureOllamaIsReady(getHealth: () => Promise<ComponentHealth>): Promise<boolean> {
+  if ((await getHealth()).status === "available") return true;
 
   let executable = await findAvailableCommand(resolveOllamaCommandCandidates());
-
   if (!executable) {
-    update("installing_ollama", 18, "Downloading the local model engine.");
-    const installResult = await installOllamaForCurrentPlatform();
-
-    if (!installResult.ok) {
-      return false;
-    }
-
+    if (!(await installOllamaForCurrentPlatform()).ok) return false;
     executable = await findAvailableCommand(resolveOllamaCommandCandidates());
   }
+  if (!executable) return false;
 
-  if (!executable) {
-    return false;
-  }
-
-  update("starting_ollama", 34, "Starting the local model engine.");
-  const child = spawn(executable, ["serve"], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true
-  });
+  const child = spawn(executable, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
   child.unref();
-
   return waitForHealth(getHealth, 45, 1000);
 }
 
@@ -2051,426 +494,29 @@ function resolveOllamaCommandCandidates(platformId: NodeJS.Platform = platform()
       join(homeDirectory, "AppData", "Local", "Ollama", "ollama.exe")
     ];
   }
-
-  return [
-    "ollama",
-    "/Applications/Ollama.app/Contents/Resources/ollama",
-    "/opt/homebrew/bin/ollama",
-    "/usr/local/bin/ollama"
-  ];
+  return ["ollama", "/Applications/Ollama.app/Contents/Resources/ollama", "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"];
 }
 
 async function installOllamaForCurrentPlatform(): Promise<{ ok: boolean }> {
   if (platform() === "win32") {
     const winget = await findAvailableCommand(["winget.exe", "winget"]);
-
     return winget
       ? runCommand(winget, ["install", "--id", "Ollama.Ollama", "--exact", "--silent", "--accept-package-agreements", "--accept-source-agreements"], 10 * 60_000)
       : { ok: false };
   }
-
   if (platform() === "darwin") {
     const brew = await findAvailableCommand(["/opt/homebrew/bin/brew", "/usr/local/bin/brew", "brew"]);
-
     return brew ? runCommand(brew, ["install", "--cask", "ollama-app"], 10 * 60_000) : { ok: false };
   }
-
   return { ok: false };
 }
 
-async function ensureUvIsAvailable(runtime: OpenWebUIRuntimeController): Promise<void> {
-  if (await runtime.isUvAvailable()) {
-    return;
-  }
-
-  const result = platform() === "win32"
-    ? await runCommand(
-        "powershell.exe",
-        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://astral.sh/uv/install.ps1 | iex"],
-        5 * 60_000
-      )
-    : await runCommand("sh", ["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"], 5 * 60_000);
-
-  if (!result.ok || !(await runtime.isUvAvailable())) {
-    throw new Error("The chat installer could not be prepared automatically.");
-  }
-}
-
-export async function provisionOpenWebUIAdmin(input: {
-  admin: { email: string; name: string; password: string };
-  baseUrl: string;
-  fetchImpl: typeof fetch;
-}): Promise<string> {
-  const signinResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/signin`, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ email: input.admin.email, password: input.admin.password }),
-    signal: AbortSignal.timeout(10_000)
-  });
-
-  let authenticationResponse = signinResponse;
-
-  if (!signinResponse.ok) {
-    const signupResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/signup`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        email: input.admin.email,
-        name: input.admin.name,
-        password: input.admin.password,
-        profile_image_url: "/user.png"
-      }),
-      signal: AbortSignal.timeout(10_000)
-    });
-
-    if (!signupResponse.ok) {
-      const detail = await readOpenWebUIErrorDetail(signupResponse);
-      const existingAdministrator =
-        signupResponse.status === 401 ||
-        signupResponse.status === 403 ||
-        /already|email.*taken|existing|prohibited|permission/i.test(detail);
-
-      if (existingAdministrator) {
-        throw new Error("The local chat already has an administrator. Enter the email and password of that existing administrator and try again.");
-      }
-
-      throw new Error(`OpenWebUI rejected the administrator account: ${detail || `HTTP ${signupResponse.status}`}`);
-    }
-
-    authenticationResponse = signupResponse;
-  }
-
-  const session = (await authenticationResponse.json()) as { role?: string; token?: string };
-
-  if (!session.token || session.role !== "admin") {
-    throw new Error("The configured chat account is not an administrator.");
-  }
-
-  const apiKeyResponse = await input.fetchImpl(`${input.baseUrl}/api/v1/auths/api_key`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${session.token}`,
-      "content-type": "application/json",
-      accept: "application/json"
-    },
-    body: "{}",
-    signal: AbortSignal.timeout(10_000)
-  });
-
-  if (!apiKeyResponse.ok) {
-    return session.token;
-  }
-
-  const result = (await apiKeyResponse.json()) as { api_key?: string };
-  return result.api_key?.trim() || session.token;
-}
-
-async function readOpenWebUIErrorDetail(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { detail?: unknown; message?: unknown };
-    const detail = payload.detail ?? payload.message;
-
-    if (typeof detail === "string") {
-      return detail.trim();
-    }
-
-    if (Array.isArray(detail)) {
-      return detail
-        .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
-        .join(" ")
-        .trim();
-    }
-  } catch {
-    // Non-JSON failures fall back to their HTTP status in the caller.
-  }
-
-  return "";
-}
-
-async function waitForHealth(
-  getHealth: () => Promise<ComponentHealth>,
-  attempts: number,
-  intervalMs: number
-): Promise<boolean> {
+async function waitForHealth(getHealth: () => Promise<ComponentHealth>, attempts: number, intervalMs: number): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if ((await getHealth()).status === "available") {
-      return true;
-    }
-
+    if ((await getHealth()).status === "available") return true;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-
   return false;
-}
-
-async function waitForManagedChat(input: {
-  clock: Clock;
-  fetchImpl: typeof fetch;
-  getRuntimeLog(): string[];
-  isRuntimeAlive(): boolean;
-  update(next: Partial<ManagedServerSetupStatus>): void;
-  url: string;
-}): Promise<boolean> {
-  const attempts = 240;
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if ((await getOpenWebUIHealth(input.url, input.clock, input.fetchImpl)).status === "available") {
-      return true;
-    }
-
-    if (attempt > 2 && !input.isRuntimeAlive()) {
-      const diagnostic = summarizeOpenWebUIRuntimeFailure(input.getRuntimeLog());
-      throw new Error(
-        diagnostic
-          ? `La chat si è arrestata durante l'avvio. Dettaglio: ${diagnostic}`
-          : "La chat si è arrestata durante l'avvio senza restituire un dettaglio tecnico."
-      );
-    }
-
-    const elapsedSeconds = attempt * 2;
-    const progress = Math.min(83, 64 + Math.floor(attempt / 5));
-    const message = elapsedSeconds < 30
-      ? "Downloading the chat components for the first start."
-      : elapsedSeconds < 120
-        ? "Installing the local chat. The first start can take a few minutes."
-        : "Finishing the first local chat start. ModelDock is still working.";
-
-    input.update({ phase: "starting_chat", progress, message });
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-
-  return false;
-}
-
-export function summarizeOpenWebUIRuntimeFailure(log: string[]): string | undefined {
-  const lines = log
-    .flatMap((entry) => entry.split(/\r?\n/))
-    .map((line) => line.replace(/\u001b\[[0-9;]*m/g, "").trim())
-    .filter(Boolean);
-  const informativeLines = lines.filter((line) => !/^Open WebUI process exited with code /i.test(line));
-  const selectedLines = (informativeLines.length > 0 ? informativeLines : lines).slice(-4);
-  const summary = selectedLines.join(" — ");
-
-  return summary ? summary.slice(-1200) : undefined;
-}
-
-async function startTailscaleLoginForCurrentPlatform(): Promise<{ message: string; started: boolean }> {
-  if (platform() === "darwin" && existsSync("/Applications/Tailscale.app")) {
-    try {
-      const child = spawn("open", ["-a", "Tailscale"], {
-        detached: true,
-        stdio: "ignore"
-      });
-      child.unref();
-
-      return {
-        started: true,
-        message: "Tailscale is open. Start a fresh sign-in from the app and use the new browser tab."
-      };
-    } catch (error) {
-      return {
-        started: false,
-        message: error instanceof Error ? error.message : "Tailscale could not be opened."
-      };
-    }
-  }
-
-  const command = await findAvailableCommand(resolveTailscaleCommandCandidatesForSetup());
-
-  if (!command) {
-    return { started: false, message: "Tailscale is not installed on this computer." };
-  }
-
-  try {
-    const child = spawn(command, ["login"], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true
-    });
-    child.unref();
-
-    return { started: true, message: "A fresh Tailscale sign-in has been opened." };
-  } catch (error) {
-    return {
-      started: false,
-      message: error instanceof Error ? error.message : "Tailscale sign-in could not be opened."
-    };
-  }
-}
-
-function resolveTailscaleCommandCandidatesForSetup(): string[] {
-  if (platform() === "win32") {
-    const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
-    return ["tailscale.exe", "tailscale", join(programFiles, "Tailscale", "tailscale.exe")];
-  }
-
-  return ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"];
-}
-
-/**
- * Reads `tailscale serve status --json` and finds the entry that proxies the
- * given local port, returning the URL other tailnet devices should open.
- *
- * Kept pure so the shape parsing is testable without a Tailscale install.
- */
-export function readTailnetChatExposure(status: unknown, port: number): { mode: "https" | "http"; url: string } | undefined {
-  if (!status || typeof status !== "object") {
-    return undefined;
-  }
-
-  const web = (status as { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> }).Web;
-  const tcp = (status as { TCP?: Record<string, { HTTP?: boolean; HTTPS?: boolean }> }).TCP;
-
-  if (!web) {
-    return undefined;
-  }
-
-  for (const [hostAndPort, entry] of Object.entries(web)) {
-    const proxiesOurPort = Object.values(entry.Handlers ?? {}).some((handler) =>
-      typeof handler.Proxy === "string" && new RegExp(`(127\\.0\\.0\\.1|localhost|\\[::1\\]):${port}(/|$)`).test(handler.Proxy)
-    );
-
-    if (!proxiesOurPort) {
-      continue;
-    }
-
-    const separator = hostAndPort.lastIndexOf(":");
-    const host = separator > 0 ? hostAndPort.slice(0, separator) : hostAndPort;
-    const servePort = separator > 0 ? hostAndPort.slice(separator + 1) : "443";
-    const serveConfig = tcp?.[servePort];
-
-    if (serveConfig?.HTTPS) {
-      return { mode: "https", url: servePort === "443" ? `https://${host}` : `https://${host}:${servePort}` };
-    }
-
-    if (serveConfig?.HTTP) {
-      return { mode: "http", url: servePort === "80" ? `http://${host}` : `http://${host}:${servePort}` };
-    }
-  }
-
-  return undefined;
-}
-
-async function readTailscaleServeStatus(command: string): Promise<unknown> {
-  const result = await runCommandCapture(command, ["serve", "status", "--json"], 15_000);
-
-  if (!result.ok) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(result.stdout) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Reports what is already published, without changing anything. */
-export async function readChatExposure(port: number): Promise<TailnetChatExposure> {
-  const command = await findAvailableCommand(resolveTailscaleCommandCandidatesForSetup());
-
-  if (!command) {
-    return { active: false, mode: "none", port, message: "Tailscale is not available on this computer." };
-  }
-
-  const current = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
-
-  return current
-    ? { active: true, mode: current.mode, url: current.url, port, message: `The chat is reachable in your private network at ${current.url}.` }
-    : { active: false, mode: "none", port, message: "The chat is not published to your private network yet, so only this computer can open it." };
-}
-
-/**
- * Publishes the loopback chat to the tailnet.
- *
- * HTTPS is preferred but needs Serve/HTTPS enabled on the tailnet; when it is
- * not, the CLI still exits 0 and simply prints an enrolment link, so success is
- * confirmed by re-reading the serve status rather than by the exit code.
- * Plain HTTP is the fallback: traffic still travels inside the WireGuard
- * tunnel, and it needs no admin-console change.
- */
-export async function exposeChatOnTailnet(
-  port: number,
-  findCommand: (candidates: string[]) => Promise<string | undefined> = findAvailableCommand
-): Promise<TailnetChatExposure> {
-  const command = await findCommand(resolveTailscaleCommandCandidatesForSetup());
-
-  if (!command) {
-    return {
-      active: false,
-      mode: "none",
-      port,
-      message: "Tailscale is not available on this computer, so the chat cannot be published to the private network."
-    };
-  }
-
-  const existing = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
-
-  if (existing) {
-    return { active: true, mode: existing.mode, url: existing.url, port, message: `The chat is reachable in your private network at ${existing.url}.` };
-  }
-
-  for (const args of [
-    ["serve", "--bg", String(port)],
-    ["serve", "--bg", `--http=${port}`, String(port)]
-  ]) {
-    await runCommand(command, args, 45_000);
-    const applied = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
-
-    if (applied) {
-      return { active: true, mode: applied.mode, url: applied.url, port, message: `The chat is reachable in your private network at ${applied.url}.` };
-    }
-  }
-
-  return {
-    active: false,
-    mode: "none",
-    port,
-    message: "Tailscale refused to publish the chat. Open Tailscale, confirm this device is signed in, and try again."
-  };
-}
-
-export async function withdrawChatFromTailnet(port: number): Promise<void> {
-  const command = await findAvailableCommand(resolveTailscaleCommandCandidatesForSetup());
-
-  if (!command) {
-    return;
-  }
-
-  const current = readTailnetChatExposure(await readTailscaleServeStatus(command), port);
-
-  if (!current) {
-    return;
-  }
-
-  await runCommand(command, current.mode === "https" ? ["serve", "--https=443", "off"] : ["serve", `--http=${port}`, "off"], 20_000);
-}
-
-async function runCommandCapture(command: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
-    let stdout = "";
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timeout);
-      resolve({ ok, stdout });
-    };
-    const timeout = setTimeout(() => {
-      child.kill();
-      finish(false);
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.on("error", () => finish(false));
-    child.on("exit", (code) => finish(code === 0));
-  });
 }
 
 async function runCommand(command: string, args: string[], timeoutMs: number): Promise<{ ok: boolean }> {
@@ -2478,10 +524,7 @@ async function runCommand(command: string, args: string[], timeoutMs: number): P
     const child = spawn(command, args, { stdio: "ignore", windowsHide: true });
     let settled = false;
     const finish = (ok: boolean) => {
-      if (settled) {
-        return;
-      }
-
+      if (settled) return;
       settled = true;
       clearTimeout(timeout);
       resolve({ ok });
@@ -2490,141 +533,32 @@ async function runCommand(command: string, args: string[], timeoutMs: number): P
       child.kill();
       finish(false);
     }, timeoutMs);
-
     child.on("error", () => finish(false));
     child.on("exit", (code) => finish(code === 0));
   });
 }
 
-function resolveOpenWebUIDataDir(): string {
-  if (platform() === "win32") {
-    return join(homedir(), "AppData", "Local", "ModelDock", "open-webui");
-  }
-
-  return join(homedir(), ".modeldock", "open-webui");
-}
-
-export function resolveUvCommandCandidates(platformId: NodeJS.Platform = platform(), homeDirectory: string = homedir()): string[] {
-  return resolvePythonToolCommandCandidates("uv", platformId, homeDirectory);
-}
-
-export function resolveUvxCommandCandidates(platformId: NodeJS.Platform = platform(), homeDirectory: string = homedir()): string[] {
-  return resolvePythonToolCommandCandidates("uvx", platformId, homeDirectory);
-}
-
-function resolvePythonToolCommandCandidates(commandName: "uv" | "uvx", platformId: NodeJS.Platform, homeDirectory: string): string[] {
-  if (platformId === "win32") {
-    return [
-      `${commandName}.exe`,
-      `${commandName}.cmd`,
-      commandName,
-      join(homeDirectory, ".local", "bin", `${commandName}.exe`),
-      join(homeDirectory, ".local", "bin", `${commandName}.cmd`)
-    ];
-  }
-
-  const homeLocalBinCommand = posix.join(homeDirectory, ".local", "bin", commandName);
-  const candidates = [commandName, homeLocalBinCommand, "/usr/local/bin/" + commandName];
-
-  if (platformId === "darwin") {
-    candidates.push("/opt/homebrew/bin/" + commandName);
-  }
-
-  return candidates;
-}
-
 async function findAvailableCommand(candidates: string[]): Promise<string | undefined> {
   for (const candidate of candidates) {
-    const result = await runFirstAvailableCommand([candidate], ["--version"], 2500);
-
-    if (result.ok) {
-      return candidate;
-    }
+    if ((await runCommand(candidate, ["--version"], 2500)).ok) return candidate;
   }
-
   return undefined;
-}
-
-async function runFirstAvailableCommand(candidates: string[], args: string[], timeoutMs: number): Promise<{ ok: boolean }> {
-  for (const candidate of candidates) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const child = spawn(candidate, args, { windowsHide: true });
-      const timeout = setTimeout(() => {
-        child.kill();
-        resolve(false);
-      }, timeoutMs);
-
-      child.on("error", () => {
-        clearTimeout(timeout);
-        resolve(false);
-      });
-      child.on("exit", (code) => {
-        clearTimeout(timeout);
-        resolve(code === 0);
-      });
-    });
-
-    if (ok) {
-      return { ok: true };
-    }
-  }
-
-  return { ok: false };
-}
-
-async function upsertLocalEnvValues(values: Record<string, string>, envPath = resolveLocalEnvPath()): Promise<void> {
-  const current = existsSync(envPath) ? await readFile(envPath, "utf8") : "";
-  const lines = current ? current.split(/\r?\n/) : [];
-  const pending = new Map(Object.entries(values));
-  const nextLines = lines.map((line) => {
-    const match = line.match(/^\s*([A-Z0-9_]+)=/);
-    const key = match?.[1];
-
-    if (!key || !pending.has(key)) {
-      return line;
-    }
-
-    const value = pending.get(key)!;
-    pending.delete(key);
-    return `${key}=${value}`;
-  });
-
-  for (const [key, value] of pending) {
-    nextLines.push(`${key}=${value}`);
-  }
-
-  const nextContent = `${nextLines.join("\n").replace(/\n*$/, "")}\n`;
-  await writeFile(envPath, nextContent, "utf8");
 }
 
 async function syncModelPoliciesWithRuntimeState(dependencies: RuntimeDependencies, models: Model[]) {
   await Promise.all(
     models.map(async (model) => {
       await dependencies.modelAccess.ensurePolicy(model.name);
-      await dependencies.modelAccess.updatePolicy({
-        modelName: model.name,
-        loaded: model.running
-      });
+      await dependencies.modelAccess.updatePolicy({ modelName: model.name, loaded: model.running });
     })
   );
 }
 
-async function runModelPullJob(
-  dependencies: RuntimeDependencies,
-  jobs: Map<string, ModelPullJob>,
-  jobId: string,
-  correlationId: string
-) {
+async function runModelPullJob(dependencies: RuntimeDependencies, jobs: Map<string, ModelPullJob>, jobId: string, correlationId: string) {
   const job = jobs.get(jobId);
+  if (!job) return;
 
-  if (!job) {
-    return;
-  }
-
-  updatePullJob(dependencies, jobs, jobId, {
-    status: "running",
-    message: "Starting download"
-  });
+  updatePullJob(dependencies, jobs, jobId, { status: "running", message: "Starting download" });
 
   try {
     for await (const item of dependencies.ollama.pullModel({ name: job.model })) {
@@ -2635,14 +569,8 @@ async function runModelPullJob(
         totalBytes: item.totalBytes
       });
     }
-
     await dependencies.modelAccess.ensurePolicy(job.model);
-
-    updatePullJob(dependencies, jobs, jobId, {
-      status: "succeeded",
-      message: "Pull completed"
-    });
-
+    updatePullJob(dependencies, jobs, jobId, { status: "succeeded", message: "Pull completed" });
     await dependencies.auditStore.append({
       actorId: "system",
       action: "MODEL_PULL_SUCCEEDED",
@@ -2658,7 +586,6 @@ async function runModelPullJob(
       message: "Pull failed",
       error: error instanceof Error ? error.message : String(error)
     });
-
     await dependencies.auditStore.append({
       actorId: "system",
       action: "MODEL_PULL_FAILED",
@@ -2679,14 +606,6 @@ function updatePullJob(
   patch: Partial<Pick<ModelPullJob, "status" | "message" | "completedBytes" | "totalBytes" | "error">>
 ) {
   const current = jobs.get(jobId);
-
-  if (!current) {
-    return;
-  }
-
-  jobs.set(jobId, {
-    ...current,
-    ...patch,
-    updatedAt: dependencies.clock.now().toISOString()
-  });
+  if (!current) return;
+  jobs.set(jobId, { ...current, ...patch, updatedAt: dependencies.clock.now().toISOString() });
 }

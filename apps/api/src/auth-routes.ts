@@ -91,6 +91,16 @@ export function registerAccountRoutes(app: FastifyInstance, options: AccountRout
   }));
 
   app.post<{ Body: { email?: string; displayName?: string; password?: string } }>("/api/auth/setup", async (request, reply) => {
+    // Before the first account exists, anyone on the network could claim the server.
+    // Only someone at this computer may create it.
+    if (!isLoopback(request.ip)) {
+      throw new ModelDockError({
+        code: "SETUP_LOCAL_ONLY",
+        module: "accounts",
+        message: "The first account can only be created on the computer that runs ModelDock.",
+        httpStatus: 403
+      });
+    }
     const body = request.body ?? {};
     const session = await accounts.setupFirstAdmin({
       email: String(body.email ?? ""),
@@ -288,8 +298,12 @@ export function registerAccountRoutes(app: FastifyInstance, options: AccountRout
  * so the gate for the older dashboard routes leaves them alone.
  */
 function isAccountRoute(path: string): boolean {
-  return ["/api/auth", "/api/chat", "/api/users", "/api/groups", "/api/invitations"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ||
+  return ["/api/auth", "/api/chat", "/api/devices", "/api/users", "/api/groups", "/api/invitations"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ||
     /^\/api\/access\/model-policies\/[^/]+\/users\//.test(path);
+}
+
+export function isLoopback(address: string): boolean {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 function requireAccount(request: FastifyRequest): Account {

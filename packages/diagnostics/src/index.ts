@@ -5,8 +5,7 @@ import type {
   DiagnosticCheck,
   DiagnosticCheckResult,
   DiagnosticStatus,
-  OllamaGateway,
-  TailscaleGateway
+  OllamaGateway
 } from "@modeldock/core";
 import { createComponentHealth } from "@modeldock/core";
 
@@ -20,7 +19,8 @@ export interface DiagnosticDependencies {
   clock: Clock;
   auditStore: AuditStore;
   ollama: OllamaGateway;
-  tailscale: TailscaleGateway;
+  /** The device connection, when ModelDock runs one. */
+  link?: () => Promise<ComponentHealth>;
 }
 
 export function createDiagnosticRegistry(dependencies: DiagnosticDependencies): DiagnosticRegistry {
@@ -47,17 +47,13 @@ export function createDiagnosticRegistry(dependencies: DiagnosticDependencies): 
         message: models.length > 0 ? `${models.length} model(s) available` : "No local models found",
         details: { count: models.length }
       };
-    }),
-    createHealthCheck("tailscale.status", "Tailscale status", dependencies.clock, () => dependencies.tailscale.getLocalStatus()),
-    createCheck("tailscale.devices", "Tailscale devices", dependencies.clock, async () => {
-      const devices = await dependencies.tailscale.listDevices();
-      return {
-        status: devices.length > 0 ? "pass" : "warn",
-        message: devices.length > 0 ? `${devices.length} device(s) visible` : "No Tailscale devices found",
-        details: { count: devices.length }
-      };
     })
   ];
+
+  if (dependencies.link) {
+    const link = dependencies.link;
+    checks.push(createHealthCheck("link.status", "Device connection", dependencies.clock, () => link()));
+  }
 
   return {
     list() {

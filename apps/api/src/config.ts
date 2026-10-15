@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadEnvFile } from "node:process";
-import type { BuildAppOptions, OllamaRuntimeMode, TailscaleRuntimeMode } from "./app.ts";
+import type { BuildAppOptions, OllamaRuntimeMode } from "./app.ts";
 
 export interface ServerConfig extends BuildAppOptions {
   host: string;
@@ -9,38 +9,39 @@ export interface ServerConfig extends BuildAppOptions {
 }
 
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+  const port = Number(env.MODELDOCK_API_PORT ?? "4317");
+  const root = resolveProjectRoot();
+  const requireLogin = env.MODELDOCK_REQUIRE_LOGIN !== "false";
   return {
     host: env.MODELDOCK_API_HOST ?? "127.0.0.1",
-    port: Number(env.MODELDOCK_API_PORT ?? "4317"),
+    port,
     logger: true,
     // Accounts, permissions and the audit log. Kept with the install, never in git (see .gitignore).
-    databasePath: env.MODELDOCK_DATABASE_PATH ?? join(resolveProjectRoot(), "data", "modeldock.db"),
+    databasePath: env.MODELDOCK_DATABASE_PATH ?? join(root, "data", "modeldock.db"),
     // Every API call needs an account. Only an explicit "false" opens it up again.
-    requireLogin: env.MODELDOCK_REQUIRE_LOGIN !== "false",
-    // Anchored to the workspace root so setup writes the same file it reads.
-    localEnvPath: resolveLocalEnvPath(),
+    requireLogin,
+    // The built chat, served by the API itself: one process, one port.
+    webRoot: env.MODELDOCK_WEB_ROOT ?? join(root, "apps", "web", "dist"),
+    // The connection other devices use. "false" switches it off.
+    ...(env.MODELDOCK_LINK === "false"
+      ? {}
+      : {
+          link: {
+            port: Number(env.MODELDOCK_LINK_PORT ?? "4319"),
+            dataDir: env.MODELDOCK_LINK_DATA_DIR ?? join(root, "data", "link"),
+            upstreamPort: port,
+            // A phone's browser on the same Wi-Fi, until the phone app exists. Never without login.
+            allowUnpairedBrowsers: requireLogin && env.MODELDOCK_LINK_ALLOW_BROWSERS !== "false"
+          }
+        }),
     ollamaBaseUrl: env.MODELDOCK_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
     ollamaModelsPath: env.MODELDOCK_OLLAMA_MODELS_PATH,
-    ollamaMode: parseOllamaMode(env.MODELDOCK_OLLAMA_MODE),
-    openWebUIApiKey: env.MODELDOCK_OPENWEBUI_API_KEY,
-    openWebUIBaseUrl: env.MODELDOCK_OPENWEBUI_BASE_URL,
-    tailscaleApiBaseUrl: env.MODELDOCK_TAILSCALE_API_BASE_URL,
-    tailscaleApiToken: env.MODELDOCK_TAILSCALE_API_TOKEN,
-    tailscaleMode: parseTailscaleMode(env.MODELDOCK_TAILSCALE_MODE),
-    tailscaleTailnet: env.MODELDOCK_TAILSCALE_TAILNET
+    ollamaMode: parseOllamaMode(env.MODELDOCK_OLLAMA_MODE)
   };
 }
 
 export function parseOllamaMode(value: string | undefined): OllamaRuntimeMode {
   if (value === "fake" || value === "real" || value === "auto") {
-    return value;
-  }
-
-  return "auto";
-}
-
-export function parseTailscaleMode(value: string | undefined): TailscaleRuntimeMode {
-  if (value === "fake" || value === "real" || value === "cli" || value === "api" || value === "auto") {
     return value;
   }
 
@@ -53,8 +54,7 @@ export function parseTailscaleMode(value: string | undefined): TailscaleRuntimeM
  * pnpm launches the API with `apps/api` as the working directory, so anything
  * anchored to `process.cwd()` reads one config file and writes another: setup
  * saved its keys into `apps/api/.env`, which then shadowed the real `.env` at
- * the root and silently dropped every other setting, the Tailscale token
- * included.
+ * the root and silently dropped every other setting.
  */
 export function resolveProjectRoot(startDirectory = import.meta.dirname): string {
   let currentDirectory = startDirectory;

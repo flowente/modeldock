@@ -1,5 +1,8 @@
 # ModelDock - Project handoff
 
+> **Outdated.** This page describes ModelDock before October 2026, when Open WebUI and Tailscale
+> were part of it. The current behaviour is in the README; this page is kept for history.
+
 Questo documento serve a riprendere il progetto da un'altra chat o da un'altra sessione senza perdere il contesto decisionale.
 
 Ultimo aggiornamento: 2026-09-02.

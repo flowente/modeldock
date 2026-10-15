@@ -1,6 +1,14 @@
 import type {
   Account,
+  AiServerPowerStatus,
+  AuditEvent,
   ChatMessage,
+  ComponentHealth,
+  DiagnosticCheckResult,
+  OllamaSetupStatus,
+  RunningModel,
+  SystemResources,
+  SystemStatus,
   Conversation,
   Model,
   ModelAccessMatrix,
@@ -10,7 +18,49 @@ import type {
   StoredGroup
 } from "../../../../packages/core/src/index.ts";
 
-export type { Account, ChatMessage, Conversation, Model, ModelAccessMatrix, ModelAccessPolicy, ModelPullJob, Role, StoredGroup };
+export type {
+  Account,
+  AiServerPowerStatus,
+  AuditEvent,
+  ChatMessage,
+  ComponentHealth,
+  Conversation,
+  DiagnosticCheckResult,
+  Model,
+  ModelAccessMatrix,
+  ModelAccessPolicy,
+  ModelPullJob,
+  OllamaSetupStatus,
+  Role,
+  RunningModel,
+  StoredGroup,
+  SystemResources,
+  SystemStatus
+};
+
+export interface LinkedDevice {
+  id: string;
+  hostname: string;
+  os?: string;
+  authorized: boolean;
+  online: boolean;
+  createdAt: string;
+  lastSeen?: string;
+}
+
+export interface DeviceInvite {
+  id: string;
+  expiresAt: string;
+  reusable: boolean;
+  requiresPin: boolean;
+  uses: number;
+}
+
+export interface DevicesOverview {
+  connection: { port: number; hosts: Array<{ host: string; port: number }>; fingerprint: string; allowUnpairedBrowsers: boolean };
+  devices: LinkedDevice[];
+  invites: DeviceInvite[];
+}
 
 export interface InvitationSummary {
   id: string;
@@ -119,7 +169,28 @@ export const api = {
     }),
   pullModel: (name: string) => request<ModelPullJob>("/api/models/pull", json({ name })),
   pullJob: (id: string) => request<ModelPullJob>(`/api/models/pull-jobs/${encodeURIComponent(id)}`),
-  deleteModel: (name: string) => request<unknown>(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" })
+  deleteModel: (name: string) => request<unknown>(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  // ---- Server ----
+  systemStatus: () => request<SystemStatus>("/api/system/status"),
+  resources: () => request<SystemResources>("/api/system/resources"),
+  ollamaInfo: () => request<OllamaSetupStatus>("/api/system/ollama"),
+  power: () => request<AiServerPowerStatus>("/api/server/power"),
+  startOllama: () => request<AiServerPowerStatus>("/api/server/power/start", { method: "POST" }),
+  releaseMemory: () => request<AiServerPowerStatus>("/api/server/release-memory", { method: "POST" }),
+  runningModels: () => request<RunningModel[]>("/api/models/running"),
+  unloadModel: (name: string) => request<unknown>(`/api/models/${encodeURIComponent(name)}/unload`, { method: "POST" }),
+  runDiagnostics: () => request<DiagnosticCheckResult[]>("/api/diagnostics/run-all", { method: "POST" }),
+  auditEvents: () => request<AuditEvent[]>("/api/audit/events"),
+
+  // ---- Devices ----
+  devices: () => request<DevicesOverview>("/api/devices"),
+  inviteDevice: (body: { requirePin: boolean; reusable?: boolean; hours?: number }) =>
+    request<{ invite: DeviceInvite; link: string; pin?: string }>("/api/devices/invites", json(body)),
+  revokeDeviceInvite: (id: string) => request<void>(`/api/devices/invites/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setDeviceAuthorized: (id: string, authorized: boolean) =>
+    request<LinkedDevice>(`/api/devices/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ authorized }) }),
+  removeDevice: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
 };
 
 /**

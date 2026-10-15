@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 async function start(options: Parameters<typeof buildApp>[0] = {}) {
-  const app = await buildApp({ ollamaMode: "fake", tailscaleMode: "fake", ...options });
+  const app = await buildApp({ ollamaMode: "fake", ...options });
   apps.push(app);
   return app;
 }

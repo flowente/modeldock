@@ -10,7 +10,7 @@ MODELDOCK_APP="$SCRIPT_DIR"
 if [[ "${1:-}" == "--help" ]]; then
   echo "Avvia ModelDock dalla repository o lo scarica in:"
   echo "$MODELDOCK_TARGET"
-  echo "Prepara un runtime locale, aggiorna l'app, crea la build stabile, avvia i servizi e apre la welcome page."
+  echo "Prepara un runtime locale, aggiorna l'app, crea la build stabile, avvia ModelDock e apre la chat."
   exit 0
 fi
 
@@ -119,8 +119,8 @@ echo
 
 (
   for _ in $(seq 1 120); do
-    if curl -fsS "http://127.0.0.1:4173/" >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:4317/api/health" >/dev/null 2>&1; then
-      open "http://127.0.0.1:4173/#welcome"
+    if curl -fsS "http://127.0.0.1:4317/api/health" >/dev/null 2>&1; then
+      open "http://127.0.0.1:4317/"
       exit 0
     fi
     sleep 1

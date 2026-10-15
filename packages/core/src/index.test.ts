@@ -14,8 +14,7 @@ describe("system health", () => {
       backend: component("backend", "available"),
       storage: component("storage", "available"),
       ollama: component("ollama", "available"),
-      tailscale: component("tailscale", "available"),
-      openWebUI: component("open-webui", "not_configured"),
+      link: component("link", "available"),
       checkedAt: "2026-08-29T00:00:00.000Z"
     });
 
@@ -28,8 +27,7 @@ describe("system health", () => {
       backend: component("backend", "available"),
       storage: component("storage", "available"),
       ollama: component("ollama", "unavailable"),
-      tailscale: component("tailscale", "available"),
-      openWebUI: component("open-webui", "not_configured"),
+      link: component("link", "available"),
       checkedAt: "2026-08-29T00:00:00.000Z"
     });
 
@@ -37,17 +35,28 @@ describe("system health", () => {
     expect(status.warnings).toContain("ollama: ollama unavailable");
   });
 
-  it("includes configured Open WebUI in aggregate health", () => {
+  it("a device connection switched off on purpose does not make the server unhealthy", () => {
     const status = buildSystemStatus({
       backend: component("backend", "available"),
       storage: component("storage", "available"),
       ollama: component("ollama", "available"),
-      tailscale: component("tailscale", "available"),
-      openWebUI: component("open-webui", "unavailable"),
+      link: component("link", "not_configured"),
+      checkedAt: "2026-08-29T00:00:00.000Z"
+    });
+
+    expect(status.overall).toBe("ok");
+  });
+
+  it("a device connection that should run but does not is reported", () => {
+    const status = buildSystemStatus({
+      backend: component("backend", "available"),
+      storage: component("storage", "available"),
+      ollama: component("ollama", "available"),
+      link: component("link", "unavailable"),
       checkedAt: "2026-08-29T00:00:00.000Z"
     });
 
     expect(status.overall).toBe("fail");
-    expect(status.warnings).toContain("open-webui: open-webui unavailable");
+    expect(status.warnings).toContain("link: link unavailable");
   });
 });

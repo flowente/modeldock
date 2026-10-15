@@ -1,5 +1,8 @@
 # ModelDock - Architecture
 
+> **Outdated.** This page describes ModelDock before October 2026, when Open WebUI and Tailscale
+> were part of it. The current behaviour is in the README; this page is kept for history.
+
 ModelDock starts as a modular monolith: one simple deployable app, with internal modules that keep the product maintainable.
 
 ## Runtime

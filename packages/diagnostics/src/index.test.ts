@@ -29,34 +29,6 @@ describe("diagnostics", () => {
         probeModel: async () => ({ model: "llama3.1:8b", output: "ok", durationMs: 1 }),
         chat: async function* () {},
         getModelCapabilities: async () => ["completion"]
-      },
-      tailscale: {
-        getLocalStatus: async () => ({
-          name: "tailscale",
-          status: "available",
-          message: "Tailscale fake is reachable",
-          checkedAt: "2026-08-29T00:00:00.000Z"
-        }),
-        listDevices: async () => [],
-        createUserInvite: async () => ({
-          id: "invite_1",
-          inviteUrl: "https://login.tailscale.com/uinv/test",
-          role: "member"
-        }),
-        updateDeviceAuthorization: async () => ({
-          id: "device_1",
-          hostname: "test-device",
-          addresses: [],
-          online: "unknown",
-          authorized: true
-        }),
-        createAuthKey: async () => ({
-          id: "key_1",
-          key: "tskey-auth-test",
-          reusable: false,
-          ephemeral: true,
-          tags: ["tag:modeldock-client"]
-        })
       }
     });
 

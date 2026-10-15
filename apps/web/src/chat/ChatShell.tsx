@@ -3,7 +3,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
-  LayoutDashboard,
+  Server,
   Lock,
   LogOut,
   Menu,
@@ -37,6 +37,8 @@ interface PendingTurn {
   conversationId?: string;
   /** Set once the server has saved the question, so the saved copy is not shown twice. */
   userMessageId?: string;
+  /** Same for the reply, once it is complete: until the live copy goes away, the saved one stays hidden. */
+  assistantMessageId?: string;
   userText: string;
   answer: string;
   error?: string;
@@ -113,7 +115,13 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         setPending((current) => (current ? { ...current, userMessageId: event.message.id } : current));
       } else if (event.type === "delta") {
         setPending((current) => (current ? { ...current, answer: current.answer + event.content } : current));
+      } else if (event.type === "done") {
+        setPending((current) => (current ? { ...current, assistantMessageId: event.message.id } : current));
       } else if (event.type === "error") {
+        if (event.message) {
+          const id = event.message.id;
+          setPending((current) => (current ? { ...current, assistantMessageId: id } : current));
+        }
         setNotice(`La risposta si è interrotta: ${event.error.message}`);
       }
     };
@@ -146,7 +154,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const showingPending = pending && (pending.conversationId === conversationId || (!pending.conversationId && !conversationId));
   // While a reply streams, the question is drawn from the live copy: leave out the saved one.
   const messages = (conversationId ? (detail.data?.messages ?? []) : []).filter(
-    (message) => !(showingPending && message.id === pending?.userMessageId)
+    (message) => !(showingPending && (message.id === pending?.userMessageId || message.id === pending?.assistantMessageId))
   );
   const isEmpty = !conversationId && !showingPending;
   const canOpenDashboard = account.role !== "member";
@@ -322,9 +330,9 @@ function Sidebar(props: {
                 <span>Impostazioni</span>
               </a>
               {props.canOpenDashboard ? (
-                <a className="md-menu-item" role="menuitem" href="#home">
-                  <LayoutDashboard size={16} aria-hidden="true" />
-                  <span>Pannello avanzato</span>
+                <a className="md-menu-item" role="menuitem" href="#/impostazioni/server">
+                  <Server size={16} aria-hidden="true" />
+                  <span>Stato del server</span>
                 </a>
               ) : null}
               <button type="button" className="md-menu-item" role="menuitem" onClick={() => void props.onSignOut()}>
