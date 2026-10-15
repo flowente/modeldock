@@ -85,6 +85,29 @@ const MIGRATIONS: string[] = [
     error_code TEXT
   );
   CREATE INDEX audit_events_time ON audit_events(timestamp DESC);
+  `,
+  `
+  CREATE TABLE conversations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    model TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX conversations_user ON conversations(user_id, updated_at DESC);
+
+  CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    model TEXT,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'stopped', 'error')),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX messages_conversation ON messages(conversation_id, seq);
   `
 ];
 

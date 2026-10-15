@@ -26,7 +26,9 @@ describe("diagnostics", () => {
         unloadModel: async () => {},
         pullModel: async function* () {},
         deleteModel: async () => {},
-        probeModel: async () => ({ model: "llama3.1:8b", output: "ok", durationMs: 1 })
+        probeModel: async () => ({ model: "llama3.1:8b", output: "ok", durationMs: 1 }),
+        chat: async function* () {},
+        getModelCapabilities: async () => ["completion"]
       },
       tailscale: {
         getLocalStatus: async () => ({

@@ -337,6 +337,56 @@ export interface AccountStore {
   deleteInvitation(id: string): Promise<void>;
 }
 
+export type ChatRole = "system" | "user" | "assistant";
+
+export interface ChatTurn {
+  role: ChatRole;
+  content: string;
+}
+
+export interface ChatInput {
+  model: string;
+  messages: ChatTurn[];
+  signal?: AbortSignal;
+}
+
+export interface ChatChunk {
+  content: string;
+  done: boolean;
+}
+
+export type ChatMessageStatus = "complete" | "stopped" | "error";
+
+export interface Conversation {
+  id: string;
+  userId: string;
+  title: string;
+  model?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  role: "user" | "assistant";
+  content: string;
+  model?: string;
+  status: ChatMessageStatus;
+  createdAt: string;
+}
+
+export interface ChatStore {
+  /** Most recent first. `query` matches titles and message text. */
+  listConversations(userId: string, query?: string): Promise<Conversation[]>;
+  findConversation(id: string): Promise<Conversation | undefined>;
+  insertConversation(conversation: Conversation): Promise<void>;
+  updateConversation(id: string, patch: { title?: string; model?: string; updatedAt: string }): Promise<void>;
+  deleteConversation(id: string): Promise<void>;
+  listMessages(conversationId: string): Promise<ChatMessage[]>;
+  insertMessage(message: ChatMessage): Promise<void>;
+}
+
 export interface RunningModel {
   name: string;
   sizeBytes?: number;
@@ -492,6 +542,13 @@ export interface OllamaGateway {
   pullModel(input: PullModelInput): AsyncIterable<ModelPullProgress>;
   deleteModel(name: string): Promise<void>;
   probeModel(input: ProbeModelInput): Promise<InferenceProbe>;
+  /** Streams a chat reply piece by piece. Aborting `signal` stops the model. */
+  chat(input: ChatInput): AsyncIterable<ChatChunk>;
+  /**
+   * What a model can do, as Ollama reports it ("completion", "embedding", "tools"...).
+   * Empty when Ollama is too old to say.
+   */
+  getModelCapabilities(name: string): Promise<string[]>;
 }
 
 export interface TailscaleGateway {

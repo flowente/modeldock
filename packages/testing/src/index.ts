@@ -6,6 +6,8 @@ import type {
   UpdateModelAccessPolicyInput
 } from "@modeldock/core";
 import type {
+  ChatChunk,
+  ChatInput,
   Clock,
   ComponentHealth,
   InferenceProbe,
@@ -169,6 +171,35 @@ export class FakeOllamaGateway implements OllamaGateway {
       durationMs: 28,
       tokenCount: 12
     };
+  }
+
+  /** Models listed here behave like embedding models: they cannot chat. */
+  public embeddingModels = new Set<string>();
+
+  public async getModelCapabilities(name: string): Promise<string[]> {
+    return this.embeddingModels.has(name) ? ["embedding"] : ["completion"];
+  }
+
+  /** How long the fake waits between words. Raise it in tests that need time to press stop. */
+  public chatDelayMs = 0;
+
+  public async *chat(input: ChatInput): AsyncIterable<ChatChunk> {
+    const question = input.messages.at(-1)?.content ?? "";
+    const words = `Fake reply from ${input.model} to: ${question}`.split(" ");
+
+    for (const [index, word] of words.entries()) {
+      if (input.signal?.aborted) {
+        return;
+      }
+
+      if (this.chatDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.chatDelayMs));
+      }
+
+      yield { content: index === 0 ? word : ` ${word}`, done: false };
+    }
+
+    yield { content: "", done: true };
   }
 
   private updateRuntimeState(modelName: string, running: boolean): void {

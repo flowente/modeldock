@@ -7,7 +7,10 @@ import type {
   AuditEventInput,
   AuditResult,
   AuditStore,
+  ChatMessage,
+  ChatStore,
   Clock,
+  Conversation,
   IdGenerator,
   ModelAccessGrant,
   ModelAccessPolicy,
@@ -449,5 +452,98 @@ function toGrant(row: Row): ModelAccessGrant {
   return {
     subject: { type: text(row.subject_type) as "user" | "group", id: text(row.subject_id) },
     canUse: Number(row.can_use) === 1
+  };
+}
+
+export class SqliteChatStore implements ChatStore {
+  private readonly db: Database;
+
+  public constructor(db: Database) {
+    this.db = db;
+  }
+
+  public async listConversations(userId: string, query?: string): Promise<Conversation[]> {
+    const term = query?.trim();
+    if (!term) {
+      const rows = this.db.prepare("SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC").all(userId) as Row[];
+      return rows.map(toConversation);
+    }
+    // LIKE wildcards typed by the user are taken literally.
+    const pattern = `%${term.replace(/[!%_]/g, (character) => `!${character}`)}%`;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM conversations c WHERE c.user_id = ? AND (
+           c.title LIKE ? ESCAPE '!'
+           OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ? ESCAPE '!')
+         ) ORDER BY c.updated_at DESC, c.rowid DESC`
+      )
+      .all(userId, pattern, pattern) as Row[];
+    return rows.map(toConversation);
+  }
+
+  public async findConversation(id: string): Promise<Conversation | undefined> {
+    const row = this.db.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Row | undefined;
+    return row ? toConversation(row) : undefined;
+  }
+
+  public async insertConversation(conversation: Conversation): Promise<void> {
+    this.db
+      .prepare("INSERT INTO conversations (id, user_id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(conversation.id, conversation.userId, conversation.title, nullable(conversation.model), conversation.createdAt, conversation.updatedAt);
+  }
+
+  public async updateConversation(id: string, patch: { title?: string; model?: string; updatedAt: string }): Promise<void> {
+    const columns: Array<[string, SqlValue]> = [["updated_at", patch.updatedAt]];
+    if (patch.title !== undefined) columns.push(["title", patch.title]);
+    if (patch.model !== undefined) columns.push(["model", patch.model]);
+    this.db
+      .prepare(`UPDATE conversations SET ${columns.map(([name]) => `${name} = ?`).join(", ")} WHERE id = ?`)
+      .run(...columns.map(([, value]) => value), id);
+  }
+
+  public async deleteConversation(id: string): Promise<void> {
+    this.db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+  }
+
+  public async listMessages(conversationId: string): Promise<ChatMessage[]> {
+    const rows = this.db.prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq").all(conversationId) as Row[];
+    return rows.map((row) => ({
+      id: text(row.id),
+      conversationId: text(row.conversation_id),
+      role: text(row.role) as ChatMessage["role"],
+      content: text(row.content),
+      ...(row.model ? { model: text(row.model) } : {}),
+      status: text(row.status) as ChatMessage["status"],
+      createdAt: text(row.created_at)
+    }));
+  }
+
+  public async insertMessage(message: ChatMessage): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO messages (id, conversation_id, seq, role, content, model, status, created_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE conversation_id = ?), ?, ?, ?, ?, ?)`
+      )
+      .run(
+        message.id,
+        message.conversationId,
+        message.conversationId,
+        message.role,
+        message.content,
+        nullable(message.model),
+        message.status,
+        message.createdAt
+      );
+  }
+}
+
+function toConversation(row: Row): Conversation {
+  return {
+    id: text(row.id),
+    userId: text(row.user_id),
+    title: text(row.title),
+    ...(row.model ? { model: text(row.model) } : {}),
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at)
   };
 }

@@ -1,4 +1,6 @@
 import type {
+  ChatChunk,
+  ChatInput,
   ComponentHealth,
   InferenceProbe,
   Model,
@@ -188,6 +190,69 @@ export class OllamaHttpGateway implements OllamaGateway {
     };
   }
 
+  public async getModelCapabilities(name: string): Promise<string[]> {
+    const response = await fetch(this.url("/api/show"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: name })
+    });
+
+    if (!response.ok) {
+      throw this.toDependencyError("getModelCapabilities", `Ollama show failed with HTTP ${response.status}`);
+    }
+
+    const body = (await response.json()) as { capabilities?: unknown };
+    return Array.isArray(body.capabilities) ? body.capabilities.map(String) : [];
+  }
+
+  public async *chat(input: ChatInput): AsyncIterable<ChatChunk> {
+    const response = await fetch(this.url("/api/chat"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: input.model, messages: input.messages, stream: true }),
+      ...(input.signal ? { signal: input.signal } : {})
+    });
+
+    if (!response.ok || !response.body) {
+      throw this.toDependencyError("chat", `Ollama chat failed with HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const chunk = parseChatLine(line);
+
+          if (chunk) {
+            yield chunk;
+          }
+        }
+      }
+
+      const last = parseChatLine(buffer);
+
+      if (last) {
+        yield last;
+      }
+    } finally {
+      // Stopping early (the user pressed stop) must also stop Ollama generating.
+      await reader.cancel().catch(() => undefined);
+    }
+  }
+
   private async getJson<T>(path: string): Promise<T> {
     const response = await fetch(this.url(path));
 
@@ -249,4 +314,18 @@ export class OllamaHttpGateway implements OllamaGateway {
       suggestion: `Check Ollama and retry ${action}.`
     });
   }
+}
+
+function parseChatLine(line: string): ChatChunk | undefined {
+  if (!line.trim()) {
+    return undefined;
+  }
+
+  const body = JSON.parse(line) as { message?: { content?: string }; done?: boolean; error?: string };
+
+  if (body.error) {
+    throw new ModelDockError({ code: "OLLAMA_CHAT_FAILED", module: "ollama-adapter", message: body.error, httpStatus: 502 });
+  }
+
+  return { content: body.message?.content ?? "", done: body.done === true };
 }

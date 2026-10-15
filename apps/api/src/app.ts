@@ -37,9 +37,10 @@ import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
 import { TailscaleApiGateway, TailscaleCliGateway } from "@modeldock/tailscale-adapter";
 import { AccountService } from "@modeldock/auth";
-import { openDatabase, SqliteAccountStore, SqliteAuditStore, SqliteModelAccessStore } from "@modeldock/storage";
+import { openDatabase, SqliteAccountStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
 import { createFakeDependencies } from "@modeldock/testing";
 import { registerAccountRoutes } from "./auth-routes.ts";
+import { registerChatRoutes } from "./chat-routes.ts";
 import { resolveLocalEnvPath } from "./config.ts";
 import {
   prepareOpenWebUIRuntimeBundle,
@@ -61,6 +62,8 @@ export interface BuildAppOptions {
   databasePath?: string;
   /** Every API route needs a signed-in account. Off until the web app can sign in. */
   requireLogin?: boolean;
+  /** Replaces the Ollama gateway. For tests that need a model with a particular behaviour. */
+  ollamaGateway?: OllamaGateway;
   ollamaBaseUrl?: string;
   ollamaModelsPath?: string;
   ollamaMode?: OllamaRuntimeMode;
@@ -216,6 +219,7 @@ export function buildClientInviteScript(os: InviteScriptOs, authKey: string, cha
 
 interface RuntimeDependencies {
   accounts: AccountService;
+  chats: SqliteChatStore;
   storage: { persistent: boolean; location: string; close(): void };
   clock: Clock;
   ids: IdGenerator;
@@ -238,6 +242,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     modelAccess: dependencies.modelAccess,
     clock: dependencies.clock,
     requireLogin: options.requireLogin ?? false
+  });
+  registerChatRoutes(app, {
+    chats: dependencies.chats,
+    ollama: dependencies.ollama,
+    modelAccess: dependencies.modelAccess,
+    clock: dependencies.clock
   });
   // Windows keeps an open database file locked: release it when the API stops.
   app.addHook("onClose", async () => dependencies.storage.close());
@@ -1238,6 +1248,7 @@ function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes:
   return {
     ...fakes,
     accounts: new AccountService(new SqliteAccountStore(database), clock),
+    chats: new SqliteChatStore(database),
     storage: { persistent, location: databasePath ?? ":memory:", close: () => database.close() },
     ...(persistent
       ? {
@@ -1251,6 +1262,11 @@ function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes:
 }
 
 function createRuntimeDependencies(options: BuildAppOptions): RuntimeDependencies {
+  const dependencies = createBaseRuntimeDependencies(options);
+  return options.ollamaGateway ? { ...dependencies, ollama: options.ollamaGateway } : dependencies;
+}
+
+function createBaseRuntimeDependencies(options: BuildAppOptions): RuntimeDependencies {
   const dependencies = withStorage(createFakeDependencies(), options.databasePath);
   const ollamaMode = options.ollamaMode ?? "fake";
   const tailscaleMode = options.tailscaleMode ?? "fake";

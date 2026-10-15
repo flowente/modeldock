@@ -277,11 +277,11 @@ export function registerAccountRoutes(app: FastifyInstance, options: AccountRout
 }
 
 /**
- * Account routes check their own permissions (public, signed in, or administrator),
+ * Account and chat routes check their own permissions (public, signed in, or administrator),
  * so the gate for the older dashboard routes leaves them alone.
  */
 function isAccountRoute(path: string): boolean {
-  return ["/api/auth", "/api/users", "/api/groups", "/api/invitations"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ||
+  return ["/api/auth", "/api/chat", "/api/users", "/api/groups", "/api/invitations"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ||
     /^\/api\/access\/model-policies\/[^/]+\/users\//.test(path);
 }
 
