@@ -29,6 +29,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@modeldock/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@modeldock/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -38,6 +41,9 @@ importers:
       '@modeldock/ollama-adapter':
         specifier: workspace:*
         version: link:../../packages/ollama-adapter
+      '@modeldock/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@modeldock/tailscale-adapter':
         specifier: workspace:*
         version: link:../../packages/tailscale-adapter
@@ -91,6 +97,10 @@ importers:
       '@modeldock/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@modeldock/storage':
+        specifier: workspace:*
+        version: link:../storage
 
   packages/core: {}
 

@@ -13,9 +13,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@modeldock/auth": "workspace:*",
     "@modeldock/core": "workspace:*",
     "@modeldock/diagnostics": "workspace:*",
     "@modeldock/ollama-adapter": "workspace:*",
+    "@modeldock/storage": "workspace:*",
     "@modeldock/tailscale-adapter": "workspace:*",
     "@modeldock/testing": "workspace:*",
     "fastify": "^5.0.0"

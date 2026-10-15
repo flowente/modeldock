@@ -466,6 +466,14 @@ export class FakeModelAccessStore implements ModelAccessStore {
     this.policies.set(input.modelName, next);
     return clonePolicy(next);
   }
+
+  public async setUserGrant(modelName: string, userId: string, canUse: boolean): Promise<ModelAccessPolicy> {
+    const current = await this.ensurePolicy(modelName);
+    const grants = current.grants.filter((grant) => grant.subject.type !== "user" || grant.subject.id !== userId);
+    const next = { ...current, grants: canUse ? [...grants, { subject: { type: "user" as const, id: userId }, canUse: true }] : grants };
+    this.policies.set(modelName, next);
+    return clonePolicy(next);
+  }
 }
 
 function applyGroupGrants(policy: ModelAccessPolicy, groupGrants: Record<string, boolean>): ModelAccessPolicy {

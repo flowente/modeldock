@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, freemem, homedir, hostname as getOsHostname, platform, totalmem } from "node:os";
@@ -35,7 +36,10 @@ import {
 import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
 import { TailscaleApiGateway, TailscaleCliGateway } from "@modeldock/tailscale-adapter";
+import { AccountService } from "@modeldock/auth";
+import { openDatabase, SqliteAccountStore, SqliteAuditStore, SqliteModelAccessStore } from "@modeldock/storage";
 import { createFakeDependencies } from "@modeldock/testing";
+import { registerAccountRoutes } from "./auth-routes.ts";
 import { resolveLocalEnvPath } from "./config.ts";
 import {
   prepareOpenWebUIRuntimeBundle,
@@ -49,6 +53,14 @@ export type TailscaleRuntimeMode = "fake" | "real" | "cli" | "api" | "auto";
 
 export interface BuildAppOptions {
   logger?: boolean;
+  /**
+   * SQLite file for accounts, permissions and the audit log. Without it the
+   * accounts live in a throwaway in-memory database and permissions stay on
+   * the demo data: that is for tests, never for a real install.
+   */
+  databasePath?: string;
+  /** Every API route needs a signed-in account. Off until the web app can sign in. */
+  requireLogin?: boolean;
   ollamaBaseUrl?: string;
   ollamaModelsPath?: string;
   ollamaMode?: OllamaRuntimeMode;
@@ -203,6 +215,8 @@ export function buildClientInviteScript(os: InviteScriptOs, authKey: string, cha
 }
 
 interface RuntimeDependencies {
+  accounts: AccountService;
+  storage: { persistent: boolean; location: string; close(): void };
   clock: Clock;
   ids: IdGenerator;
   auditStore: AuditStore;
@@ -218,6 +232,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const modelPullJobs = new Map<string, ModelPullJob>();
   const openWebUIRuntime = options.openWebUIRuntime ?? createOpenWebUIRuntimeController();
   const app = Fastify({ logger: options.logger ?? false });
+  registerAccountRoutes(app, {
+    accounts: dependencies.accounts,
+    auditStore: dependencies.auditStore,
+    modelAccess: dependencies.modelAccess,
+    clock: dependencies.clock,
+    requireLogin: options.requireLogin ?? false
+  });
+  // Windows keeps an open database file locked: release it when the API stops.
+  app.addHook("onClose", async () => dependencies.storage.close());
   let managedServerSetup = createInitialManagedServerSetupStatus(dependencies.clock);
   let powerTransition: "starting" | "stopping" | null = null;
 
@@ -305,7 +328,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     return buildSystemStatus({
       backend: createComponentHealth({ name: "backend", status: "available", message: "ModelDock API is running" }, dependencies.clock),
-      storage: createComponentHealth({ name: "storage", status: "available", message: "In-memory storage is writable" }, dependencies.clock),
+      storage: createComponentHealth(
+        dependencies.storage.persistent
+          ? { name: "storage", status: "available", message: `Database at ${dependencies.storage.location}` }
+          : { name: "storage", status: "degraded", message: "In-memory storage: accounts and permissions are lost on restart" },
+        dependencies.clock
+      ),
       ollama,
       tailscale,
       openWebUI,
@@ -1156,7 +1184,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.setErrorHandler(async (error, request, reply) => {
     if (error instanceof ModelDockError) {
-      await reply.status(400).send({
+      await reply.status(error.httpStatus).send({
         error: {
           code: error.code,
           message: error.message,
@@ -1198,8 +1226,32 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   return app;
 }
 
+/**
+ * Accounts always sit on SQLite. With a file, permissions and the audit log move
+ * there too and stop being demo data; without one (tests) they stay fake.
+ */
+function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes: T, databasePath: string | undefined) {
+  const persistent = Boolean(databasePath);
+  const database = openDatabase(databasePath ?? ":memory:");
+  const clock = persistent ? { now: () => new Date() } : fakes.clock;
+
+  return {
+    ...fakes,
+    accounts: new AccountService(new SqliteAccountStore(database), clock),
+    storage: { persistent, location: databasePath ?? ":memory:", close: () => database.close() },
+    ...(persistent
+      ? {
+          clock,
+          // Sequential ids restart at every boot and would collide with rows already in the file.
+          auditStore: new SqliteAuditStore(database, clock, { createId: (prefix: string) => `${prefix}_${randomUUID()}` }),
+          modelAccess: new SqliteModelAccessStore(database)
+        }
+      : {})
+  };
+}
+
 function createRuntimeDependencies(options: BuildAppOptions): RuntimeDependencies {
-  const dependencies = createFakeDependencies();
+  const dependencies = withStorage(createFakeDependencies(), options.databasePath);
   const ollamaMode = options.ollamaMode ?? "fake";
   const tailscaleMode = options.tailscaleMode ?? "fake";
 

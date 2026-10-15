@@ -8,7 +8,9 @@ export type Permission =
   | "models:probe"
   | "network:read"
   | "diagnostics:run"
-  | "audit:read";
+  | "audit:read"
+  | "chat:use"
+  | "accounts:manage";
 
 const rolePermissions: Record<Role, Permission[]> = {
   admin: [
@@ -19,10 +21,13 @@ const rolePermissions: Record<Role, Permission[]> = {
     "models:probe",
     "network:read",
     "diagnostics:run",
-    "audit:read"
+    "audit:read",
+    "chat:use",
+    "accounts:manage"
   ],
-  operator: ["system:read", "models:read", "models:probe", "network:read", "diagnostics:run", "audit:read"],
-  viewer: ["system:read", "models:read", "network:read", "audit:read"]
+  operator: ["system:read", "models:read", "models:probe", "network:read", "diagnostics:run", "audit:read", "chat:use"],
+  viewer: ["system:read", "models:read", "network:read", "audit:read", "chat:use"],
+  member: ["models:read", "chat:use"]
 };
 
 export function permissionsFor(role: Role): Permission[] {
@@ -33,4 +38,5 @@ export function can(role: Role, permission: Permission): boolean {
   return rolePermissions[role].includes(permission);
 }
 
-export * from "./model-access.js";
+export * from "./model-access.ts";
+export * from "./accounts.ts";

@@ -164,7 +164,9 @@ describe("ModelDock API", () => {
     const body = response.json();
 
     expect(response.statusCode).toBe(200);
-    expect(body.overall).toBe("ok");
+    // Without a database file accounts are lost on restart, and the status says so.
+    expect(body.overall).toBe("degraded");
+    expect(body.components.storage.status).toBe("degraded");
     expect(body.components.ollama.status).toBe("available");
     expect(body.components.openWebUI.status).toBe("not_configured");
   });

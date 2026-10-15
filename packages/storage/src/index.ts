@@ -25,3 +25,6 @@ export class InMemoryAuditStore implements AuditStore {
     return this.events.slice(0, limit);
   }
 }
+
+export { openDatabase, SCHEMA_VERSION, transaction, type Database } from "./database.ts";
+export { SqliteAccountStore, SqliteAuditStore, SqliteModelAccessStore } from "./sqlite-stores.ts";

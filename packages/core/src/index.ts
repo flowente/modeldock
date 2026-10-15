@@ -2,7 +2,11 @@ export type HealthState = "available" | "degraded" | "unavailable" | "unknown" |
 export type OverallHealth = "ok" | "degraded" | "fail";
 export type DiagnosticStatus = "pass" | "warn" | "fail" | "skipped";
 export type AuditResult = "success" | "failure";
-export type Role = "admin" | "operator" | "viewer";
+/**
+ * admin: everything, including accounts. operator: runs the server, no accounts.
+ * viewer: reads the dashboard. member: only chats with the models it is granted.
+ */
+export type Role = "admin" | "operator" | "viewer" | "member";
 export type AccessSubjectType = "user" | "group";
 
 export interface Clock {
@@ -242,6 +246,95 @@ export interface ModelAccessStore {
   ensurePolicy(modelName: string): Promise<ModelAccessPolicy>;
   deletePolicy(modelName: string): Promise<void>;
   updatePolicy(input: UpdateModelAccessPolicyInput): Promise<ModelAccessPolicy>;
+  /** Grants or revokes a model for one account, on top of its groups. */
+  setUserGrant(modelName: string, userId: string, canUse: boolean): Promise<ModelAccessPolicy>;
+}
+
+export type AccountStatus = "active" | "invited" | "disabled";
+
+export interface Account {
+  id: string;
+  email: string;
+  displayName: string;
+  role: Role;
+  status: AccountStatus;
+  groupIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+}
+
+/** An account as stored. The hash never leaves the server. */
+export interface StoredAccount extends Account {
+  passwordHash?: string;
+}
+
+export interface AccountPatch {
+  displayName?: string;
+  role?: Role;
+  status?: AccountStatus;
+  passwordHash?: string;
+  lastLoginAt?: string;
+  groupIds?: string[];
+  updatedAt: string;
+}
+
+export interface StoredGroup extends AccessGroup {
+  createdAt: string;
+}
+
+/** A login session. Only the SHA-256 of the token is stored. */
+export interface StoredSession {
+  idHash: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt: string;
+  userAgent?: string;
+}
+
+/** An invitation to create an account. Only the SHA-256 of the token is stored. */
+export interface StoredInvitation {
+  id: string;
+  tokenHash: string;
+  email: string;
+  displayName: string;
+  role: Role;
+  groupIds: string[];
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string;
+}
+
+export interface AccountStore {
+  countAccounts(): Promise<number>;
+  listAccounts(): Promise<StoredAccount[]>;
+  findAccountById(id: string): Promise<StoredAccount | undefined>;
+  findAccountByEmail(email: string): Promise<StoredAccount | undefined>;
+  insertAccount(account: StoredAccount): Promise<void>;
+  updateAccount(id: string, patch: AccountPatch): Promise<void>;
+  deleteAccount(id: string): Promise<void>;
+
+  listGroups(): Promise<StoredGroup[]>;
+  findGroupById(id: string): Promise<StoredGroup | undefined>;
+  insertGroup(group: StoredGroup): Promise<void>;
+  updateGroup(id: string, patch: { name?: string; description?: string | null }): Promise<void>;
+  deleteGroup(id: string): Promise<void>;
+
+  insertSession(session: StoredSession): Promise<void>;
+  findSession(idHash: string): Promise<StoredSession | undefined>;
+  touchSession(idHash: string, lastSeenAt: string, expiresAt: string): Promise<void>;
+  deleteSession(idHash: string): Promise<void>;
+  deleteSessionsForUser(userId: string, exceptIdHash?: string): Promise<void>;
+  deleteExpiredSessions(now: string): Promise<void>;
+
+  insertInvitation(invitation: StoredInvitation): Promise<void>;
+  listInvitations(): Promise<StoredInvitation[]>;
+  findInvitationByTokenHash(tokenHash: string): Promise<StoredInvitation | undefined>;
+  /** Marks the invitation used. False if it was already used: two people cannot redeem one link. */
+  consumeInvitation(id: string, usedAt: string): Promise<boolean>;
+  deleteInvitation(id: string): Promise<void>;
 }
 
 export interface RunningModel {
@@ -415,6 +508,8 @@ export interface ModelDockErrorShape {
   module: string;
   suggestion?: string;
   cause?: unknown;
+  /** HTTP status the API answers with. Defaults to 400. */
+  httpStatus?: number;
 }
 
 export class ModelDockError extends Error {
@@ -422,6 +517,7 @@ export class ModelDockError extends Error {
   public readonly module: string;
   public readonly suggestion?: string;
   public override readonly cause?: unknown;
+  public readonly httpStatus: number;
 
   public constructor(shape: ModelDockErrorShape) {
     super(shape.message);
@@ -430,6 +526,7 @@ export class ModelDockError extends Error {
     this.module = shape.module;
     this.suggestion = shape.suggestion;
     this.cause = shape.cause;
+    this.httpStatus = shape.httpStatus ?? 400;
   }
 }
 
@@ -488,6 +585,11 @@ export function buildSystemStatus(input: BuildSystemStatusInput): SystemStatus {
 export function canUseModel(policy: ModelAccessPolicy, user: UserAccessContext): boolean {
   if (!policy.enabled) {
     return false;
+  }
+
+  // Administrators always reach every enabled model: a grant can never lock them out.
+  if (user.role === "admin") {
+    return true;
   }
 
   return policy.grants.some((grant) => grant.canUse && matchesSubject(grant.subject, user));

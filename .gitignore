@@ -13,3 +13,6 @@ test-results/
 *.log
 .webui_secret_key
 **/.webui_secret_key
+
+# Local ModelDock database (accounts, permissions, audit log)
+data/

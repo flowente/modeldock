@@ -17,6 +17,16 @@ describe("server configuration", () => {
     });
   });
 
+  it("keeps accounts in a database inside the install, and leaves login off by default", () => {
+    const config = loadServerConfig({});
+    expect(config.databasePath).toBe(join(resolveProjectRoot(), "data", "modeldock.db"));
+    expect(config.requireLogin).toBe(false);
+    expect(loadServerConfig({ MODELDOCK_REQUIRE_LOGIN: "true", MODELDOCK_DATABASE_PATH: "/tmp/x.db" })).toMatchObject({
+      requireLogin: true,
+      databasePath: "/tmp/x.db"
+    });
+  });
+
   it("accepts supported adapter modes", () => {
     expect(parseOllamaMode("fake")).toBe("fake");
     expect(parseOllamaMode("real")).toBe("real");
