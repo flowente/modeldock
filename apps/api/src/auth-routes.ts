@@ -23,8 +23,7 @@ export interface AccountRoutesOptions {
   clock: Clock;
   /**
    * When true, every API route except the public ones needs a signed-in account.
-   * Off until the web app has its login screen (phase 3): turning it on earlier
-   * would lock the current dashboard out of its own API.
+   * On by default; off only for tests and for installs that explicitly opt out.
    */
   requireLogin: boolean;
 }
@@ -156,6 +155,14 @@ export function registerAccountRoutes(app: FastifyInstance, options: AccountRout
   // ---- Signed in: own account ----
 
   app.get("/api/auth/me", async (request) => requireAccount(request));
+
+  /** Everyone can change their own name. Role, groups and status stay with administrators. */
+  app.patch<{ Body: { displayName?: string } }>("/api/auth/me", async (request) => {
+    const account = requireAccount(request);
+    const updated = await accounts.updateAccount(account.id, { displayName: String(request.body?.displayName ?? "") });
+    await audit(request, "ACCOUNT_RENAMED", "success", "account", account.id);
+    return updated;
+  });
 
   app.post<{ Body: { currentPassword?: string; newPassword?: string } }>("/api/auth/password", async (request, reply) => {
     const account = requireAccount(request);

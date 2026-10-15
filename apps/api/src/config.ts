@@ -15,7 +15,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     logger: true,
     // Accounts, permissions and the audit log. Kept with the install, never in git (see .gitignore).
     databasePath: env.MODELDOCK_DATABASE_PATH ?? join(resolveProjectRoot(), "data", "modeldock.db"),
-    requireLogin: env.MODELDOCK_REQUIRE_LOGIN === "true",
+    // Every API call needs an account. Only an explicit "false" opens it up again.
+    requireLogin: env.MODELDOCK_REQUIRE_LOGIN !== "false",
     // Anchored to the workspace root so setup writes the same file it reads.
     localEnvPath: resolveLocalEnvPath(),
     ollamaBaseUrl: env.MODELDOCK_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",

@@ -132,6 +132,15 @@ describe("account API", () => {
     expect(JSON.stringify(users.json())).not.toContain("passwordHash");
   });
 
+  it("anyone signed in can change their own name, and only their name", async () => {
+    const app = await start();
+    const cookie = await setupAdmin(app);
+    const renamed = await app.inject({ method: "PATCH", url: "/api/auth/me", headers: { cookie }, payload: { displayName: "Simone G.", role: "member" } });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json()).toMatchObject({ displayName: "Simone G.", role: "admin" });
+    expect((await app.inject({ method: "PATCH", url: "/api/auth/me", payload: { displayName: "x" } })).statusCode).toBe(401);
+  });
+
   it("an administrator cannot delete their own account or remove the last administrator", async () => {
     const app = await start();
     const cookie = await setupAdmin(app);

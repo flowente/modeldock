@@ -63,6 +63,16 @@ describe("chat API", () => {
     expect(refused.statusCode).toBe(403);
   });
 
+  it("tells the settings screen which models can chat; members cannot ask", async () => {
+    const gateway = new FakeOllamaGateway();
+    gateway.embeddingModels.add("phi3:mini");
+    const app = await start({ ollamaGateway: gateway });
+    const { adminCookie, memberCookie } = await signedIn(app);
+    const capabilities = (await app.inject({ method: "GET", url: "/api/chat/model-capabilities", headers: { cookie: adminCookie } })).json();
+    expect(capabilities).toMatchObject({ "phi3:mini": { chat: false }, "llama3.1:8b": { chat: true } });
+    expect((await app.inject({ method: "GET", url: "/api/chat/model-capabilities", headers: { cookie: memberCookie } })).statusCode).toBe(403);
+  });
+
   it("refuses a model the account is not granted, even if the request names it directly", async () => {
     const app = await start();
     const { memberCookie } = await signedIn(app);

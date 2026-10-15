@@ -67,6 +67,17 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
 
   app.get("/api/chat/models", async (request) => allowedModels(requireChatAccount(request)));
 
+  /** What each installed model can do, for the settings screen ("not a chat model"). */
+  app.get("/api/chat/model-capabilities", async (request) => {
+    const account = requireChatAccount(request);
+    if (!can(account.role, "system:read")) {
+      throw new ModelDockError({ code: "AUTH_FORBIDDEN", module: "chat", message: "Your account cannot do this.", httpStatus: 403 });
+    }
+    const installed = await ollama.listLocalModels();
+    const entries = await Promise.all(installed.map(async (model) => [model.name, await canChat(model.name)] as const));
+    return Object.fromEntries(entries.map(([name, chat]) => [name, { chat }]));
+  });
+
   app.get<{ Querystring: { q?: string } }>("/api/chat/conversations", async (request) => {
     const account = requireChatAccount(request);
     return chats.listConversations(account.id, request.query.q);

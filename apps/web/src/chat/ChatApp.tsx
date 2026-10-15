@@ -2,24 +2,35 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, ApiError, type Account } from "./chat-api.ts";
 import { ChatShell } from "./ChatShell.tsx";
+import { Settings } from "./Settings.tsx";
 import "./chat.css";
 
 export type ThemePreference = "light" | "dark";
+export type ThemeChoice = ThemePreference | "system";
 
 const THEME_KEY = "modeldock.theme";
 
-function readStoredTheme(): ThemePreference | null {
+function readStoredTheme(): ThemeChoice {
   try {
     const value = window.localStorage.getItem(THEME_KEY);
-    return value === "light" || value === "dark" ? value : null;
+    return value === "light" || value === "dark" ? value : "system";
   } catch {
-    return null;
+    return "system";
   }
 }
 
-/** The chosen theme, or the system's until the person picks one. */
-export function useTheme(): [ThemePreference, () => void] {
-  const [stored, setStored] = useState<ThemePreference | null>(readStoredTheme);
+export interface ThemeControl {
+  /** What is on screen now. */
+  theme: ThemePreference;
+  /** What the person picked: a theme, or "follow the system". */
+  choice: ThemeChoice;
+  choose: (choice: ThemeChoice) => void;
+  toggle: () => void;
+}
+
+/** The chosen theme, or the system's until the person picks one. Remembered in this browser only. */
+export function useTheme(): ThemeControl {
+  const [choice, setChoice] = useState<ThemeChoice>(readStoredTheme);
   const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
 
   useEffect(() => {
@@ -30,17 +41,17 @@ export function useTheme(): [ThemePreference, () => void] {
     return () => query.removeEventListener("change", onChange);
   }, []);
 
-  const theme = stored ?? (systemDark ? "dark" : "light");
-  const toggle = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setStored(next);
+  const theme: ThemePreference = choice === "system" ? (systemDark ? "dark" : "light") : choice;
+  const choose = (next: ThemeChoice) => {
+    setChoice(next);
     try {
-      window.localStorage.setItem(THEME_KEY, next);
+      if (next === "system") window.localStorage.removeItem(THEME_KEY);
+      else window.localStorage.setItem(THEME_KEY, next);
     } catch {
       // the choice simply won't survive a reload
     }
   };
-  return [theme, toggle];
+  return { theme, choice, choose, toggle: () => choose(theme === "dark" ? "light" : "dark") };
 }
 
 /** The part of the hash after "#/": "", "c/<id>", "invito/<token>". */
@@ -82,7 +93,14 @@ export function explain(error: unknown): string {
     CHAT_MODEL_NOT_ALLOWED: "Questo modello non è disponibile per il tuo account.",
     CHAT_MESSAGE_INVALID: "Il messaggio è vuoto o troppo lungo.",
     CHAT_NOT_FOUND: "Questa conversazione non esiste più.",
-    AUTH_REQUIRED: "La sessione è scaduta: accedi di nuovo."
+    AUTH_REQUIRED: "La sessione è scaduta: accedi di nuovo.",
+    AUTH_FORBIDDEN: "Il tuo account non può farlo.",
+    ACCOUNT_LAST_ADMIN: "È l'unico amministratore attivo: prima rendi amministratore un altro account.",
+    ACCOUNT_DELETE_SELF: "Non puoi eliminare il tuo account.",
+    ACCOUNT_PASSWORD_WRONG: "La password attuale non è corretta.",
+    GROUP_NAME_TAKEN: "Esiste già un gruppo con questo nome.",
+    GROUP_NAME_INVALID: "Il nome del gruppo deve avere fra 1 e 60 caratteri.",
+    INVALID_INPUT: "Manca un dato obbligatorio."
   };
   return messages[error.code] ?? "Qualcosa non ha funzionato. Riprova.";
 }
@@ -97,7 +115,7 @@ export function Mark({ size = 24 }: { size?: number }) {
 }
 
 export function ChatApp() {
-  const [theme, toggleTheme] = useTheme();
+  const themeControl = useTheme();
   const route = useChatRoute();
   const queryClient = useQueryClient();
   const state = useQuery({ queryKey: ["auth-state"], queryFn: api.state });
@@ -131,12 +149,16 @@ export function ChatApp() {
     content = <SetupScreen onDone={refresh} />;
   } else if (!state.data.account) {
     content = <LoginScreen onDone={refresh} />;
+  } else if (route === "impostazioni" || route.startsWith("impostazioni/")) {
+    content = <Settings account={state.data.account} section={route.split("/")[1] ?? ""} theme={themeControl} onAccountChanged={refresh} />;
   } else {
-    content = <ChatShell account={state.data.account} route={route} theme={theme} onToggleTheme={toggleTheme} onSignedOut={refresh} />;
+    content = (
+      <ChatShell account={state.data.account} route={route} theme={themeControl.theme} onToggleTheme={themeControl.toggle} onSignedOut={refresh} />
+    );
   }
 
   return (
-    <div className="md-chat" data-theme={theme}>
+    <div className="md-chat" data-theme={themeControl.theme}>
       {content}
     </div>
   );

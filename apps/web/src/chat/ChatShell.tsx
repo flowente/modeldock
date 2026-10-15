@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings as SettingsIcon,
   Square,
   Sun,
   Trash2
@@ -316,10 +317,14 @@ function Sidebar(props: {
           </button>
           {menuOpen ? (
             <div className="md-menu md-menu-up" role="menu">
+              <a className="md-menu-item" role="menuitem" href="#/impostazioni">
+                <SettingsIcon size={16} aria-hidden="true" />
+                <span>Impostazioni</span>
+              </a>
               {props.canOpenDashboard ? (
                 <a className="md-menu-item" role="menuitem" href="#home">
                   <LayoutDashboard size={16} aria-hidden="true" />
-                  <span>Pannello del server</span>
+                  <span>Pannello avanzato</span>
                 </a>
               ) : null}
               <button type="button" className="md-menu-item" role="menuitem" onClick={() => void props.onSignOut()}>

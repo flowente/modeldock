@@ -60,7 +60,7 @@ export interface BuildAppOptions {
    * the demo data: that is for tests, never for a real install.
    */
   databasePath?: string;
-  /** Every API route needs a signed-in account. Off until the web app can sign in. */
+  /** Every API route needs a signed-in account. The server config turns it on; tests leave it off. */
   requireLogin?: boolean;
   /** Replaces the Ollama gateway. For tests that need a model with a particular behaviour. */
   ollamaGateway?: OllamaGateway;

@@ -1,6 +1,27 @@
-import type { Account, ChatMessage, Conversation } from "../../../../packages/core/src/index.ts";
+import type {
+  Account,
+  ChatMessage,
+  Conversation,
+  Model,
+  ModelAccessMatrix,
+  ModelAccessPolicy,
+  ModelPullJob,
+  Role,
+  StoredGroup
+} from "../../../../packages/core/src/index.ts";
 
-export type { Account, ChatMessage, Conversation };
+export type { Account, ChatMessage, Conversation, Model, ModelAccessMatrix, ModelAccessPolicy, ModelPullJob, Role, StoredGroup };
+
+export interface InvitationSummary {
+  id: string;
+  email: string;
+  displayName: string;
+  role: Role;
+  groupIds: string[];
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string;
+}
 
 export interface AuthState {
   setupRequired: boolean;
@@ -63,7 +84,42 @@ export const api = {
   conversation: (id: string) => request<{ conversation: Conversation; messages: ChatMessage[] }>(`/api/chat/conversations/${encodeURIComponent(id)}`),
   rename: (id: string, title: string) =>
     request<Conversation>(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
-  remove: (id: string) => request<void>(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" })
+  remove: (id: string) => request<void>(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ---- Own account ----
+  renameMe: (displayName: string) => request<Account>("/api/auth/me", { method: "PATCH", body: JSON.stringify({ displayName }) }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/api/auth/password", json({ currentPassword, newPassword })),
+
+  // ---- Administration ----
+  users: () => request<Account[]>("/api/users"),
+  updateUser: (id: string, patch: { displayName?: string; role?: Role; status?: "active" | "disabled"; groupIds?: string[] }) =>
+    request<Account>(`/api/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteUser: (id: string) => request<void>(`/api/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  groups: () => request<StoredGroup[]>("/api/groups"),
+  createGroup: (name: string) => request<StoredGroup>("/api/groups", json({ name })),
+  renameGroup: (id: string, name: string) => request<StoredGroup>(`/api/groups/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteGroup: (id: string) => request<void>(`/api/groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  invitations: () => request<InvitationSummary[]>("/api/invitations"),
+  invite: (body: { email: string; displayName: string; role: Role; groupIds: string[] }) =>
+    request<{ invitation: InvitationSummary; token: string; acceptPath: string }>("/api/invitations", json(body)),
+  revokeInvitation: (id: string) => request<void>(`/api/invitations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  installedModels: () => request<Model[]>("/api/models"),
+  modelCapabilities: () => request<Record<string, { chat: boolean }>>("/api/chat/model-capabilities"),
+  accessMatrix: () => request<ModelAccessMatrix>("/api/access/model-policies"),
+  updatePolicy: (modelName: string, patch: { enabled?: boolean; groupGrants?: Record<string, boolean> }) =>
+    request<ModelAccessPolicy>("/api/access/model-policies", { method: "PUT", body: JSON.stringify({ modelName, ...patch }) }),
+  setUserGrant: (modelName: string, userId: string, canUse: boolean) =>
+    request<ModelAccessPolicy>(`/api/access/model-policies/${encodeURIComponent(modelName)}/users/${encodeURIComponent(userId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ canUse })
+    }),
+  pullModel: (name: string) => request<ModelPullJob>("/api/models/pull", json({ name })),
+  pullJob: (id: string) => request<ModelPullJob>(`/api/models/pull-jobs/${encodeURIComponent(id)}`),
+  deleteModel: (name: string) => request<unknown>(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" })
 };
 
 /**
