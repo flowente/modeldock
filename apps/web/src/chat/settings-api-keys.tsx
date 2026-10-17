@@ -188,9 +188,11 @@ function KeyTable({ keys, loading, showOwner, onRevoke }: { keys: ApiKeySummary[
 
 /* ---------------------------------------------------------------- How to connect */
 
-type Language = "curl" | "python" | "javascript" | "n8n";
+type Language = "powershell" | "curl" | "python" | "javascript" | "n8n";
 
 const LANGUAGES: Array<{ id: Language; label: string }> = [
+  // In Windows PowerShell "curl" is another command, and the curl example fails there.
+  { id: "powershell", label: "PowerShell" },
   { id: "curl", label: "curl" },
   { id: "python", label: "Python" },
   { id: "javascript", label: "JavaScript" },
@@ -198,7 +200,7 @@ const LANGUAGES: Array<{ id: Language; label: string }> = [
 ];
 
 function ConnectCard({ account, secret }: { account: Account; secret: string | null }) {
-  const [language, setLanguage] = useState<Language>("python");
+  const [language, setLanguage] = useState<Language>(navigator.userAgent.includes("Windows") ? "powershell" : "curl");
   const models = useQuery({ queryKey: ["chat-models"], queryFn: api.models });
   // Only administrators can read the network addresses; for the others the current one will do.
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, retry: false, enabled: account.role === "admin" });
@@ -270,6 +272,13 @@ function Example({ language, baseUrl, apiKey, model }: { language: Language; bas
 
 function exampleCode(language: Language, baseUrl: string, apiKey: string, model: string): string {
   switch (language) {
+    case "powershell":
+      return [
+        `$risposta = Invoke-RestMethod -Method Post -Uri "${baseUrl}/chat/completions" \``,
+        `  -Headers @{ Authorization = "Bearer ${apiKey}" } -ContentType "application/json" \``,
+        `  -Body '{"model": "${model}", "messages": [{"role": "user", "content": "Ciao!"}]}'`,
+        "$risposta.choices[0].message.content"
+      ].join("\n");
     case "curl":
       return [
         `curl ${baseUrl}/chat/completions \\`,

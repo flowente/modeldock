@@ -77,9 +77,13 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
       return null;
     }
   });
+  // A model picked inside an open conversation applies to its next message. Without this the
+  // conversation's own model always won, and the picker snapped back to it.
+  const [switchedTo, setSwitchedTo] = useState<string | null>(null);
   const available = models.data ?? [];
-  const model = pickModel(available, detail.data?.conversation.model, chosenModel);
+  const model = pickModel(available, switchedTo ?? detail.data?.conversation.model, chosenModel);
   const chooseModel = (name: string) => {
+    setSwitchedTo(name);
     setChosenModel(name);
     try {
       window.localStorage.setItem(MODEL_KEY, name);
@@ -92,6 +96,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   useEffect(() => {
     setSidebarOpen(false);
     setNotice(null);
+    setSwitchedTo(null);
   }, [route]);
 
   const streaming = pending !== null && !pending.error;
