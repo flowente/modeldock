@@ -22,12 +22,13 @@ import {
   type OllamaSetupStatus,
   type SystemResources
 } from "@modeldock/core";
-import { AccountService } from "@modeldock/auth";
+import { AccountService, ApiKeyService } from "@modeldock/auth";
 import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { FileStateStore, LinkRegistry, listLanAddresses, loadOrCreateIdentity, startLinkServer } from "@modeldock/link";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
-import { openDatabase, SqliteAccountStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
+import { openDatabase, SqliteAccountStore, SqliteApiKeyStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
 import { createFakeDependencies } from "@modeldock/testing";
+import { registerApiKeysRoutes } from "./api-keys-routes.ts";
 import { registerAccountRoutes } from "./auth-routes.ts";
 import { registerChatRoutes } from "./chat-routes.ts";
 import { registerDevicesRoutes, type LinkRuntime } from "./devices-routes.ts";
@@ -70,6 +71,7 @@ export interface BuildAppOptions {
 
 interface RuntimeDependencies {
   accounts: AccountService;
+  apiKeys: ApiKeyService;
   chats: SqliteChatStore;
   storage: { persistent: boolean; location: string; close(): void };
   clock: Clock;
@@ -126,6 +128,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     modelAccess: dependencies.modelAccess,
     clock: dependencies.clock
   });
+  registerApiKeysRoutes(app, { apiKeys: dependencies.apiKeys, auditStore: dependencies.auditStore });
   registerDevicesRoutes(app, { link, auditStore: dependencies.auditStore, clock: dependencies.clock });
 
   app.addHook("onClose", async () => {
@@ -428,9 +431,12 @@ function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes:
   const database = openDatabase(databasePath ?? ":memory:");
   const clock = persistent ? { now: () => new Date() } : fakes.clock;
 
+  const accountStore = new SqliteAccountStore(database);
+
   return {
     ...fakes,
-    accounts: new AccountService(new SqliteAccountStore(database), clock),
+    accounts: new AccountService(accountStore, clock),
+    apiKeys: new ApiKeyService(new SqliteApiKeyStore(database), accountStore, clock),
     chats: new SqliteChatStore(database),
     storage: { persistent, location: databasePath ?? ":memory:", close: () => database.close() },
     ...(persistent

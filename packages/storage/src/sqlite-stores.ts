@@ -3,6 +3,7 @@ import type {
   AccessUser,
   AccountPatch,
   AccountStore,
+  ApiKeyStore,
   AuditEvent,
   AuditEventInput,
   AuditResult,
@@ -17,6 +18,7 @@ import type {
   ModelAccessStore,
   Role,
   StoredAccount,
+  StoredApiKey,
   StoredGroup,
   StoredInvitation,
   StoredSession,
@@ -535,6 +537,60 @@ export class SqliteChatStore implements ChatStore {
         message.createdAt
       );
   }
+}
+
+export class SqliteApiKeyStore implements ApiKeyStore {
+  private readonly db: Database;
+
+  public constructor(db: Database) {
+    this.db = db;
+  }
+
+  public async insertApiKey(key: StoredApiKey): Promise<void> {
+    this.db
+      .prepare("INSERT INTO api_keys (id, user_id, name, key_hash, hint, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(key.id, key.userId, key.name, key.keyHash, key.hint, key.createdAt, nullable(key.lastUsedAt), nullable(key.revokedAt));
+  }
+
+  public async listApiKeys(userId?: string): Promise<StoredApiKey[]> {
+    const rows = (
+      userId === undefined
+        ? this.db.prepare("SELECT * FROM api_keys WHERE revoked_at IS NULL ORDER BY created_at DESC, rowid DESC").all()
+        : this.db.prepare("SELECT * FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC, rowid DESC").all(userId)
+    ) as Row[];
+    return rows.map(toApiKey);
+  }
+
+  public async findApiKeyById(id: string): Promise<StoredApiKey | undefined> {
+    const row = this.db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as Row | undefined;
+    return row ? toApiKey(row) : undefined;
+  }
+
+  public async findApiKeyByHash(keyHash: string): Promise<StoredApiKey | undefined> {
+    const row = this.db.prepare("SELECT * FROM api_keys WHERE key_hash = ?").get(keyHash) as Row | undefined;
+    return row ? toApiKey(row) : undefined;
+  }
+
+  public async touchApiKey(id: string, lastUsedAt: string): Promise<void> {
+    this.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(lastUsedAt, id);
+  }
+
+  public async revokeApiKey(id: string, revokedAt: string): Promise<void> {
+    this.db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(revokedAt, id);
+  }
+}
+
+function toApiKey(row: Row): StoredApiKey {
+  return {
+    id: text(row.id),
+    userId: text(row.user_id),
+    name: text(row.name),
+    keyHash: text(row.key_hash),
+    hint: text(row.hint),
+    createdAt: text(row.created_at),
+    ...(row.last_used_at ? { lastUsedAt: text(row.last_used_at) } : {}),
+    ...(row.revoked_at ? { revokedAt: text(row.revoked_at) } : {})
+  };
 }
 
 function toConversation(row: Row): Conversation {

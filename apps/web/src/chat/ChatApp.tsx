@@ -101,6 +101,9 @@ export function explain(error: unknown): string {
     ACCOUNT_PASSWORD_WRONG: "La password attuale non è corretta.",
     GROUP_NAME_TAKEN: "Esiste già un gruppo con questo nome.",
     GROUP_NAME_INVALID: "Il nome del gruppo deve avere fra 1 e 60 caratteri.",
+    API_KEY_NAME_INVALID: "Dai alla chiave un nome fra 1 e 60 caratteri.",
+    API_KEY_LIMIT: "Hai già 25 chiavi attive: revocane una che non usi più.",
+    API_KEY_NOT_FOUND: "Questa chiave non esiste più: forse è già stata revocata.",
     INVALID_INPUT: "Manca un dato obbligatorio."
   };
   return messages[error.code] ?? "Qualcosa non ha funzionato. Riprova.";

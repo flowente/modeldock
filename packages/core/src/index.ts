@@ -229,6 +229,32 @@ export interface AccountStore {
   deleteInvitation(id: string): Promise<void>;
 }
 
+/**
+ * A key for the OpenAI-compatible API. Only the SHA-256 of the key is stored; `hint` is the
+ * few characters shown in the list so its owner can tell keys apart.
+ * A revoked key stays, so that its usage history keeps pointing at something.
+ */
+export interface StoredApiKey {
+  id: string;
+  userId: string;
+  name: string;
+  keyHash: string;
+  hint: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+}
+
+export interface ApiKeyStore {
+  insertApiKey(key: StoredApiKey): Promise<void>;
+  /** Newest first. Without `userId`, every account's keys. Revoked keys are left out. */
+  listApiKeys(userId?: string): Promise<StoredApiKey[]>;
+  findApiKeyById(id: string): Promise<StoredApiKey | undefined>;
+  findApiKeyByHash(keyHash: string): Promise<StoredApiKey | undefined>;
+  touchApiKey(id: string, lastUsedAt: string): Promise<void>;
+  revokeApiKey(id: string, revokedAt: string): Promise<void>;
+}
+
 export type ChatRole = "system" | "user" | "assistant";
 
 export interface ChatTurn {

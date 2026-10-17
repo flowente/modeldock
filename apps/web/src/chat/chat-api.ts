@@ -73,6 +73,15 @@ export interface InvitationSummary {
   usedAt?: string;
 }
 
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  hint: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  owner: { id: string; displayName: string; email: string };
+}
+
 export interface AuthState {
   setupRequired: boolean;
   requireLogin: boolean;
@@ -140,6 +149,11 @@ export const api = {
   renameMe: (displayName: string) => request<Account>("/api/auth/me", { method: "PATCH", body: JSON.stringify({ displayName }) }),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/api/auth/password", json({ currentPassword, newPassword })),
+
+  // ---- API keys ----
+  apiKeys: (scope: "own" | "all") => request<ApiKeySummary[]>(`/api/api-keys${scope === "all" ? "?scope=all" : ""}`),
+  createApiKey: (name: string) => request<{ key: ApiKeySummary; secret: string }>("/api/api-keys", json({ name })),
+  revokeApiKey: (id: string) => request<void>(`/api/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ---- Administration ----
   users: () => request<Account[]>("/api/users"),

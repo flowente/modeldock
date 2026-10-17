@@ -601,3 +601,44 @@
   font-family: var(--md-mono);
   letter-spacing: 0.12em;
 }
+
+/* ---------- API keys ---------- */
+
+.md-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  border: 1px solid var(--md-line);
+  border-radius: 10px;
+  gap: 2px;
+}
+
+.md-segmented button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-segmented button[aria-pressed="true"] {
+  background: var(--md-hover);
+  color: var(--md-text);
+}
+
+.md-key-hint {
+  font-family: var(--md-mono);
+  font-size: 13px;
+  color: var(--md-text-2);
+  white-space: nowrap;
+}
+
+.md-empty-keys {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

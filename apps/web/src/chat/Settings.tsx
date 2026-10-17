@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Copy, Trash2 } from "lucide-react";
+import { ApiKeysSection } from "./settings-api-keys.tsx";
 import { DevicesSection, ServerSection } from "./settings-server.tsx";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, type Account, type ModelPullJob, type Role, type StoredGroup } from "./chat-api.ts";
@@ -30,6 +31,7 @@ interface Section {
 const SECTIONS: Section[] = [
   { id: "account", label: "Account", visible: () => true },
   { id: "aspetto", label: "Aspetto", visible: () => true },
+  { id: "chiavi-api", label: "Chiavi API", visible: () => true },
   { id: "modelli", label: "Modelli e permessi", visible: (account) => account.role === "admin" },
   { id: "utenti", label: "Utenti e gruppi", visible: (account) => account.role === "admin" },
   { id: "dispositivi", label: "Dispositivi", visible: (account) => account.role === "admin" },
@@ -60,6 +62,7 @@ export function Settings({ account, section, theme, onAccountChanged }: { accoun
         <div className="md-settings-content">
           {current.id === "account" ? <AccountSection account={account} onChanged={onAccountChanged} /> : null}
           {current.id === "aspetto" ? <AppearanceSection theme={theme} /> : null}
+          {current.id === "chiavi-api" ? <ApiKeysSection account={account} /> : null}
           {current.id === "modelli" ? <ModelsSection /> : null}
           {current.id === "utenti" ? <UsersSection account={account} /> : null}
           {current.id === "dispositivi" ? <DevicesSection /> : null}

@@ -108,6 +108,19 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   CREATE INDEX messages_conversation ON messages(conversation_id, seq);
+  `,
+  `
+  CREATE TABLE api_keys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    hint TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT
+  );
+  CREATE INDEX api_keys_user ON api_keys(user_id, created_at DESC);
   `
 ];
 

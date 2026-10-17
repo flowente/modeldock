@@ -298,7 +298,7 @@ export function registerAccountRoutes(app: FastifyInstance, options: AccountRout
  * so the gate for the older dashboard routes leaves them alone.
  */
 function isAccountRoute(path: string): boolean {
-  return ["/api/auth", "/api/chat", "/api/devices", "/api/users", "/api/groups", "/api/invitations"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ||
+  return ["/api/auth", "/api/chat", "/api/devices", "/api/users", "/api/groups", "/api/invitations", "/api/api-keys"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ||
     /^\/api\/access\/model-policies\/[^/]+\/users\//.test(path);
 }
 
@@ -306,14 +306,14 @@ export function isLoopback(address: string): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
-function requireAccount(request: FastifyRequest): Account {
+export function requireAccount(request: FastifyRequest): Account {
   if (!request.account) {
     throw new ModelDockError({ code: "AUTH_REQUIRED", module: "accounts", message: "Sign in to continue.", httpStatus: 401 });
   }
   return request.account;
 }
 
-function requirePermission(request: FastifyRequest, permission: Permission): Account {
+export function requirePermission(request: FastifyRequest, permission: Permission): Account {
   const account = requireAccount(request);
   if (!can(account.role, permission)) {
     throw new ModelDockError({ code: "AUTH_FORBIDDEN", module: "accounts", message: "Your account cannot do this.", httpStatus: 403 });
