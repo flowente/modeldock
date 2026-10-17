@@ -711,10 +711,15 @@
   padding: 8px 24px 20px;
 }
 
-.md-welcome .md-composer-wrap {
+/* On the welcome screen the composer sits straight in a centred flex column,
+   which would shrink it to its placeholder: give it the full width. */
+.md-welcome .md-composer {
   width: 100%;
   max-width: 720px;
-  padding: 0;
+}
+
+.md-welcome .md-composer textarea {
+  min-height: 52px;
 }
 
 .md-composer {
