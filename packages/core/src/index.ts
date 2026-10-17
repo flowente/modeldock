@@ -414,6 +414,25 @@ export interface OllamaGateway {
    * Empty when Ollama is too old to say.
    */
   getModelCapabilities(name: string): Promise<string[]>;
+  /**
+   * Forwards a request to Ollama's OpenAI-compatible endpoints and hands back its answer as it
+   * comes, streaming included. ModelDock checks the key and the model before calling this.
+   */
+  openAi(input: OpenAiForwardInput): Promise<OpenAiForwardResponse>;
+}
+
+export type OpenAiEndpoint = "/v1/chat/completions" | "/v1/embeddings";
+
+export interface OpenAiForwardInput {
+  endpoint: OpenAiEndpoint;
+  body: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
+export interface OpenAiForwardResponse {
+  status: number;
+  contentType: string;
+  body: AsyncIterable<Uint8Array>;
 }
 
 export interface ModelDockErrorShape {

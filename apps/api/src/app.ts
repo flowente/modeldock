@@ -32,6 +32,7 @@ import { registerApiKeysRoutes } from "./api-keys-routes.ts";
 import { registerAccountRoutes } from "./auth-routes.ts";
 import { registerChatRoutes } from "./chat-routes.ts";
 import { registerDevicesRoutes, type LinkRuntime } from "./devices-routes.ts";
+import { registerOpenAiRoutes } from "./openai-routes.ts";
 
 export type OllamaRuntimeMode = "fake" | "real" | "auto";
 
@@ -129,6 +130,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     clock: dependencies.clock
   });
   registerApiKeysRoutes(app, { apiKeys: dependencies.apiKeys, auditStore: dependencies.auditStore });
+  registerOpenAiRoutes(app, { apiKeys: dependencies.apiKeys, ollama: dependencies.ollama, modelAccess: dependencies.modelAccess });
   registerDevicesRoutes(app, { link, auditStore: dependencies.auditStore, clock: dependencies.clock });
 
   app.addHook("onClose", async () => {

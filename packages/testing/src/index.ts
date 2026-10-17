@@ -15,12 +15,25 @@ import type {
   ModelPullProgress,
   ModelRuntimeInput,
   OllamaGateway,
+  OpenAiForwardInput,
+  OpenAiForwardResponse,
   PullModelInput,
   RunningModel
 } from "@modeldock/core";
 import { createComponentHealth, ModelDockError, setModelEnabled, setModelLoaded } from "@modeldock/core";
 import { SequentialIdGenerator } from "@modeldock/observability";
 import { InMemoryAuditStore } from "@modeldock/storage";
+
+function jsonResponse(status: number, payload: unknown): OpenAiForwardResponse {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  return {
+    status,
+    contentType: "application/json",
+    body: (async function* () {
+      yield bytes;
+    })()
+  };
+}
 
 export class FixedClock implements Clock {
   private readonly value: Date;
@@ -193,6 +206,62 @@ export class FakeOllamaGateway implements OllamaGateway {
     }
 
     yield { content: "", done: true };
+  }
+
+  /** The last request forwarded to the OpenAI-compatible endpoints, for tests to inspect. */
+  public lastOpenAiRequest: OpenAiForwardInput | undefined;
+
+  /**
+   * Answers like Ollama's OpenAI-compatible layer: a chat completion (JSON, or server-sent
+   * events with `stream: true`) or embeddings. An unknown model gets Ollama's 404.
+   */
+  public async openAi(input: OpenAiForwardInput): Promise<OpenAiForwardResponse> {
+    this.lastOpenAiRequest = input;
+    const model = String(input.body.model ?? "");
+    if (!this.models.has(model)) {
+      return jsonResponse(404, { error: { message: `model "${model}" not found, try pulling it first`, type: "api_error", param: null, code: null } });
+    }
+
+    if (input.endpoint === "/v1/embeddings") {
+      const inputs = Array.isArray(input.body.input) ? input.body.input.map(String) : [String(input.body.input ?? "")];
+      return jsonResponse(200, {
+        object: "list",
+        data: inputs.map((text, index) => ({ object: "embedding", index, embedding: [text.length, 0.5, -0.5, 1] })),
+        model,
+        usage: { prompt_tokens: inputs.length * 3, total_tokens: inputs.length * 3 }
+      });
+    }
+
+    const messages = Array.isArray(input.body.messages) ? (input.body.messages as Array<{ content?: unknown }>) : [];
+    const words = `Fake reply from ${model} to: ${String(messages.at(-1)?.content ?? "")}`.split(" ");
+    const usage = { prompt_tokens: 5, completion_tokens: words.length, total_tokens: 5 + words.length };
+    const base = { id: "chatcmpl-fake", created: 1_788_000_000, model, system_fingerprint: "fp_ollama" };
+
+    if (input.body.stream !== true) {
+      return jsonResponse(200, {
+        ...base,
+        object: "chat.completion",
+        choices: [{ index: 0, message: { role: "assistant", content: words.join(" ") }, finish_reason: "stop" }],
+        usage
+      });
+    }
+
+    const includeUsage = (input.body.stream_options as { include_usage?: unknown } | undefined)?.include_usage === true;
+    const signal = input.signal;
+    const delay = this.chatDelayMs;
+    const encoder = new TextEncoder();
+    async function* events(): AsyncIterable<Uint8Array> {
+      const event = (payload: unknown) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+      for (const [index, word] of words.entries()) {
+        if (signal?.aborted) return;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        yield event({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: index === 0 ? word : ` ${word}` }, finish_reason: null }] });
+      }
+      yield event({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: "stop" }] });
+      if (includeUsage) yield event({ ...base, object: "chat.completion.chunk", choices: [], usage });
+      yield encoder.encode("data: [DONE]\n\n");
+    }
+    return { status: 200, contentType: "text/event-stream", body: events() };
   }
 
   private updateRuntimeState(modelName: string, running: boolean): void {

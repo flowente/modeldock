@@ -5,6 +5,8 @@ import type {
   InferenceProbe,
   Model,
   ModelPullProgress,
+  OpenAiForwardInput,
+  OpenAiForwardResponse,
   ModelRuntimeInput,
   OllamaGateway,
   PullModelInput,
@@ -253,6 +255,32 @@ export class OllamaHttpGateway implements OllamaGateway {
     }
   }
 
+  public async openAi(input: OpenAiForwardInput): Promise<OpenAiForwardResponse> {
+    let response: Response;
+    try {
+      response = await fetch(this.url(input.endpoint), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input.body),
+        ...(input.signal ? { signal: input.signal } : {})
+      });
+    } catch (error) {
+      if (input.signal?.aborted) throw error;
+      throw new ModelDockError({
+        code: "DEPENDENCY_UNAVAILABLE",
+        module: "ollama-adapter",
+        message: "Ollama is not reachable.",
+        suggestion: "Start Ollama and retry.",
+        httpStatus: 502
+      });
+    }
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "application/json",
+      body: response.body ?? emptyBody()
+    };
+  }
+
   private async getJson<T>(path: string): Promise<T> {
     const response = await fetch(this.url(path));
 
@@ -315,6 +343,8 @@ export class OllamaHttpGateway implements OllamaGateway {
     });
   }
 }
+
+async function* emptyBody(): AsyncIterable<Uint8Array> {}
 
 function parseChatLine(line: string): ChatChunk | undefined {
   if (!line.trim()) {
