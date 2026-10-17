@@ -73,6 +73,28 @@ export interface InvitationSummary {
   usedAt?: string;
 }
 
+export interface ApiUsageTotals {
+  calls: number;
+  errors: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface ApiUsageDay extends ApiUsageTotals {
+  day: string;
+}
+
+export interface ApiUsageEntry {
+  model: string;
+  endpoint: "chat" | "embeddings";
+  status: number;
+  streamed: boolean;
+  promptTokens: number;
+  completionTokens: number;
+  durationMs: number;
+  createdAt: string;
+}
+
 export interface ApiKeySummary {
   id: string;
   name: string;
@@ -80,6 +102,17 @@ export interface ApiKeySummary {
   createdAt: string;
   lastUsedAt?: string;
   owner: { id: string; displayName: string; email: string };
+  /** The last 30 days. */
+  usage: ApiUsageTotals;
+}
+
+export interface ApiKeyUsage {
+  key: Omit<ApiKeySummary, "usage">;
+  period: { days: number; since: string };
+  totals: ApiUsageTotals;
+  daily: ApiUsageDay[];
+  byModel: Array<ApiUsageTotals & { model: string }>;
+  recent: ApiUsageEntry[];
 }
 
 export interface AuthState {
@@ -153,6 +186,8 @@ export const api = {
   // ---- API keys ----
   apiKeys: (scope: "own" | "all") => request<ApiKeySummary[]>(`/api/api-keys${scope === "all" ? "?scope=all" : ""}`),
   createApiKey: (name: string) => request<{ key: ApiKeySummary; secret: string }>("/api/api-keys", json({ name })),
+  apiKeyUsage: (id: string, days: number, offset: number) =>
+    request<ApiKeyUsage>(`/api/api-keys/${encodeURIComponent(id)}/usage?days=${days}&offset=${offset}`),
   revokeApiKey: (id: string) => request<void>(`/api/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ---- Administration ----

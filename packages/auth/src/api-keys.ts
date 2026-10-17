@@ -78,6 +78,17 @@ export class ApiKeyService {
     });
   }
 
+  /** One active key, if this account may look at it: its own, or anyone's for administrators. */
+  public async findVisible(input: { id: string; actor: Account; canManageAll: boolean }): Promise<ApiKeySummary> {
+    const key = await this.keys.findApiKeyById(input.id);
+    if (!key || key.revokedAt || (key.userId !== input.actor.id && !input.canManageAll)) {
+      fail("API_KEY_NOT_FOUND", "API key not found.", 404);
+    }
+    const owner = key.userId === input.actor.id ? input.actor : await this.accounts.findAccountById(key.userId);
+    if (!owner) fail("API_KEY_NOT_FOUND", "API key not found.", 404);
+    return summarize(key, owner);
+  }
+
   /**
    * Revokes a key. Its owner can, and so can whoever manages accounts. To anyone else the key
    * does not exist: the answer must not confirm that an id is real.

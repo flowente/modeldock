@@ -255,6 +255,50 @@ export interface ApiKeyStore {
   revokeApiKey(id: string, revokedAt: string): Promise<void>;
 }
 
+/**
+ * One call to the OpenAI-compatible API: numbers only. What was asked and answered is never kept.
+ * Status 499 means the caller hung up before the answer was complete.
+ */
+export interface ApiUsageEntry {
+  keyId: string;
+  model: string;
+  endpoint: "chat" | "embeddings";
+  status: number;
+  streamed: boolean;
+  promptTokens: number;
+  completionTokens: number;
+  durationMs: number;
+  createdAt: string;
+}
+
+export interface ApiUsageTotals {
+  calls: number;
+  errors: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface ApiUsageDay extends ApiUsageTotals {
+  /** YYYY-MM-DD in the viewer's time zone. */
+  day: string;
+}
+
+export interface ApiUsageByModel extends ApiUsageTotals {
+  model: string;
+}
+
+export interface ApiUsageStore {
+  record(entry: ApiUsageEntry): Promise<void>;
+  /** Totals per key since `since`, for the keys list. */
+  totalsByKey(keyIds: string[], since: string): Promise<Map<string, ApiUsageTotals>>;
+  /** Day by day since `since`. `offsetMinutes` moves UTC to the viewer's clock (Italy in summer: 120). */
+  daily(keyId: string, since: string, offsetMinutes: number): Promise<ApiUsageDay[]>;
+  byModel(keyId: string, since: string): Promise<ApiUsageByModel[]>;
+  /** Most recent first. */
+  recent(keyId: string, limit: number): Promise<ApiUsageEntry[]>;
+  deleteOlderThan(before: string): Promise<void>;
+}
+
 export type ChatRole = "system" | "user" | "assistant";
 
 export interface ChatTurn {

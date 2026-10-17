@@ -642,3 +642,278 @@
   align-items: center;
   gap: 8px;
 }
+
+/* ---------- API usage ---------- */
+
+.md-chat {
+  --md-series-in: #0f8f78;
+  --md-series-out: #7b6be0;
+}
+
+.md-chat[data-theme="dark"] {
+  --md-series-in: #26a88d;
+  --md-series-out: #8a79ee;
+}
+
+.md-key-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 500;
+  color: var(--md-text);
+  text-decoration: none;
+}
+
+.md-key-link:hover {
+  color: var(--md-accent);
+}
+
+.md-key-created {
+  display: block;
+  font-size: 12px;
+}
+
+.md-num,
+.md-nowrap {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.md-model-name {
+  font-family: var(--md-mono);
+  font-size: 13px;
+}
+
+.md-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--md-text-2);
+  text-decoration: none;
+}
+
+.md-back-link:hover {
+  color: var(--md-text);
+}
+
+.md-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.md-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+  border: 1px solid var(--md-line);
+  border-radius: 14px;
+  background: var(--md-panel);
+}
+
+.md-tile-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-tile-value {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--md-text);
+}
+
+.md-tile-note {
+  font-size: 12px;
+  color: var(--md-muted);
+}
+
+.md-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.md-swatch[data-series="in"] {
+  background: var(--md-series-in);
+}
+
+.md-swatch[data-series="out"] {
+  background: var(--md-series-out);
+}
+
+.md-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.md-chart-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.md-legend {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.md-chart-plot {
+  position: relative;
+  min-width: 0;
+}
+
+.md-chart-plot svg {
+  display: block;
+}
+
+.md-chart-empty {
+  display: grid;
+  place-items: center;
+  height: 200px;
+  margin: 0;
+  color: var(--md-muted);
+  font-size: 14px;
+}
+
+.md-grid {
+  stroke: var(--md-line);
+  stroke-width: 1;
+}
+
+.md-axis {
+  fill: var(--md-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-mark[data-series="in"],
+.md-mark[data-series="calls"] {
+  fill: var(--md-series-in);
+}
+
+.md-mark[data-series="out"] {
+  fill: var(--md-series-out);
+}
+
+.md-chart-hover {
+  fill: var(--md-hover);
+  opacity: 0.6;
+}
+
+.md-tooltip {
+  position: absolute;
+  top: 0;
+  width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--md-line);
+  border-radius: 10px;
+  background: var(--md-panel);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
+  font-size: 12px;
+  color: var(--md-text-2);
+  pointer-events: none;
+}
+
+.md-tooltip strong {
+  color: var(--md-text);
+  font-weight: 600;
+}
+
+.md-tooltip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-chart-table summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.md-outcome[data-tone="ok"] svg {
+  color: var(--md-accent);
+}
+
+.md-outcome[data-tone="error"] svg {
+  color: var(--md-danger);
+}
+
+.md-outcome[data-tone="muted"] {
+  color: var(--md-muted);
+}
+
+.md-connect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+
+.md-connect-list dt {
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-connect-list dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 4px 0 0;
+}
+
+.md-connect-list dd code {
+  font-family: var(--md-mono);
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--md-code);
+  overflow-wrap: anywhere;
+}
+
+.md-connect-list small {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--md-muted);
+}
+
+/* The heading's own column rule must not turn a period switch into a stack. */
+.md-settings-heading > .md-segmented {
+  flex: 0 0 auto;
+  flex-direction: row;
+  gap: 2px;
+}

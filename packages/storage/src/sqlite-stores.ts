@@ -4,6 +4,11 @@ import type {
   AccountPatch,
   AccountStore,
   ApiKeyStore,
+  ApiUsageByModel,
+  ApiUsageDay,
+  ApiUsageEntry,
+  ApiUsageStore,
+  ApiUsageTotals,
   AuditEvent,
   AuditEventInput,
   AuditResult,
@@ -577,6 +582,91 @@ export class SqliteApiKeyStore implements ApiKeyStore {
 
   public async revokeApiKey(id: string, revokedAt: string): Promise<void> {
     this.db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(revokedAt, id);
+  }
+}
+
+const TOTALS = `COUNT(*) AS calls,
+  SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
+  COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+  COALESCE(SUM(completion_tokens), 0) AS completion_tokens`;
+
+function toTotals(row: Row): ApiUsageTotals {
+  return {
+    calls: Number(row.calls ?? 0),
+    errors: Number(row.errors ?? 0),
+    promptTokens: Number(row.prompt_tokens ?? 0),
+    completionTokens: Number(row.completion_tokens ?? 0)
+  };
+}
+
+export class SqliteApiUsageStore implements ApiUsageStore {
+  private readonly db: Database;
+
+  public constructor(db: Database) {
+    this.db = db;
+  }
+
+  public async record(entry: ApiUsageEntry): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO api_usage (key_id, model, endpoint, status, streamed, prompt_tokens, completion_tokens, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        entry.keyId,
+        entry.model,
+        entry.endpoint,
+        entry.status,
+        entry.streamed ? 1 : 0,
+        entry.promptTokens,
+        entry.completionTokens,
+        entry.durationMs,
+        entry.createdAt
+      );
+  }
+
+  public async totalsByKey(keyIds: string[], since: string): Promise<Map<string, ApiUsageTotals>> {
+    const result = new Map<string, ApiUsageTotals>();
+    if (keyIds.length === 0) return result;
+    const rows = this.db
+      .prepare(`SELECT key_id, ${TOTALS} FROM api_usage WHERE created_at >= ? AND key_id IN (${keyIds.map(() => "?").join(", ")}) GROUP BY key_id`)
+      .all(since, ...keyIds) as Row[];
+    for (const row of rows) result.set(text(row.key_id), toTotals(row));
+    return result;
+  }
+
+  public async daily(keyId: string, since: string, offsetMinutes: number): Promise<ApiUsageDay[]> {
+    const shift = `${Math.trunc(offsetMinutes) >= 0 ? "+" : ""}${Math.trunc(offsetMinutes)} minutes`;
+    const rows = this.db
+      .prepare(`SELECT date(created_at, ?) AS day, ${TOTALS} FROM api_usage WHERE key_id = ? AND created_at >= ? GROUP BY day ORDER BY day`)
+      .all(shift, keyId, since) as Row[];
+    return rows.map((row) => ({ day: text(row.day), ...toTotals(row) }));
+  }
+
+  public async byModel(keyId: string, since: string): Promise<ApiUsageByModel[]> {
+    const rows = this.db
+      .prepare(`SELECT model, ${TOTALS} FROM api_usage WHERE key_id = ? AND created_at >= ? GROUP BY model ORDER BY calls DESC, model`)
+      .all(keyId, since) as Row[];
+    return rows.map((row) => ({ model: text(row.model), ...toTotals(row) }));
+  }
+
+  public async recent(keyId: string, limit: number): Promise<ApiUsageEntry[]> {
+    const rows = this.db.prepare("SELECT * FROM api_usage WHERE key_id = ? ORDER BY created_at DESC, id DESC LIMIT ?").all(keyId, limit) as Row[];
+    return rows.map((row) => ({
+      keyId: text(row.key_id),
+      model: text(row.model),
+      endpoint: text(row.endpoint) as ApiUsageEntry["endpoint"],
+      status: Number(row.status),
+      streamed: Number(row.streamed) === 1,
+      promptTokens: Number(row.prompt_tokens),
+      completionTokens: Number(row.completion_tokens),
+      durationMs: Number(row.duration_ms),
+      createdAt: text(row.created_at)
+    }));
+  }
+
+  public async deleteOlderThan(before: string): Promise<void> {
+    this.db.prepare("DELETE FROM api_usage WHERE created_at < ?").run(before);
   }
 }
 

@@ -121,6 +121,21 @@ const MIGRATIONS: string[] = [
     revoked_at TEXT
   );
   CREATE INDEX api_keys_user ON api_keys(user_id, created_at DESC);
+  `,
+  `
+  CREATE TABLE api_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    endpoint TEXT NOT NULL CHECK (endpoint IN ('chat', 'embeddings')),
+    status INTEGER NOT NULL,
+    streamed INTEGER NOT NULL,
+    prompt_tokens INTEGER NOT NULL,
+    completion_tokens INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX api_usage_key_time ON api_usage(key_id, created_at);
   `
 ];
 

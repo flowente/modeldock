@@ -26,7 +26,7 @@ import { AccountService, ApiKeyService } from "@modeldock/auth";
 import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { FileStateStore, LinkRegistry, listLanAddresses, loadOrCreateIdentity, startLinkServer } from "@modeldock/link";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
-import { openDatabase, SqliteAccountStore, SqliteApiKeyStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
+import { openDatabase, SqliteAccountStore, SqliteApiKeyStore, SqliteApiUsageStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
 import { createFakeDependencies } from "@modeldock/testing";
 import { registerApiKeysRoutes } from "./api-keys-routes.ts";
 import { registerAccountRoutes } from "./auth-routes.ts";
@@ -73,6 +73,7 @@ export interface BuildAppOptions {
 interface RuntimeDependencies {
   accounts: AccountService;
   apiKeys: ApiKeyService;
+  apiUsage: SqliteApiUsageStore;
   chats: SqliteChatStore;
   storage: { persistent: boolean; location: string; close(): void };
   clock: Clock;
@@ -129,8 +130,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     modelAccess: dependencies.modelAccess,
     clock: dependencies.clock
   });
-  registerApiKeysRoutes(app, { apiKeys: dependencies.apiKeys, auditStore: dependencies.auditStore });
-  registerOpenAiRoutes(app, { apiKeys: dependencies.apiKeys, ollama: dependencies.ollama, modelAccess: dependencies.modelAccess });
+  registerApiKeysRoutes(app, { apiKeys: dependencies.apiKeys, usage: dependencies.apiUsage, auditStore: dependencies.auditStore, clock: dependencies.clock });
+  registerOpenAiRoutes(app, {
+    apiKeys: dependencies.apiKeys,
+    ollama: dependencies.ollama,
+    modelAccess: dependencies.modelAccess,
+    usage: dependencies.apiUsage,
+    clock: dependencies.clock
+  });
   registerDevicesRoutes(app, { link, auditStore: dependencies.auditStore, clock: dependencies.clock });
 
   app.addHook("onClose", async () => {
@@ -439,6 +446,7 @@ function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes:
     ...fakes,
     accounts: new AccountService(accountStore, clock),
     apiKeys: new ApiKeyService(new SqliteApiKeyStore(database), accountStore, clock),
+    apiUsage: new SqliteApiUsageStore(database),
     chats: new SqliteChatStore(database),
     storage: { persistent, location: databasePath ?? ":memory:", close: () => database.close() },
     ...(persistent

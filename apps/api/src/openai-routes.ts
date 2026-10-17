@@ -1,15 +1,22 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ApiKeyService } from "@modeldock/auth";
-import type { Account, ModelAccessStore, OllamaGateway, OpenAiEndpoint } from "@modeldock/core";
+import type { Account, ApiUsageStore, Clock, ModelAccessStore, OllamaGateway, OpenAiEndpoint } from "@modeldock/core";
 import { canUseModel, ModelDockError } from "@modeldock/core";
+import { JsonUsageMeter, StreamUsageMeter } from "./usage-meter.ts";
 
 /** Long conversations, or many texts to embed at once, are bigger than Fastify's 1 MB default. */
 const BODY_LIMIT = 32 * 1024 * 1024;
+/** Usage older than this is forgotten. */
+const USAGE_RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
+/** What a call that ended because the caller hung up is recorded as (nginx's convention). */
+const CLIENT_CLOSED = 499;
 
 export interface OpenAiRoutesOptions {
   apiKeys: ApiKeyService;
   ollama: OllamaGateway;
   modelAccess: ModelAccessStore;
+  usage: ApiUsageStore;
+  clock: Clock;
 }
 
 declare module "fastify" {
@@ -25,8 +32,12 @@ declare module "fastify" {
  * Calls here never end up in the chat history.
  */
 export function registerOpenAiRoutes(app: FastifyInstance, options: OpenAiRoutesOptions): void {
-  const { apiKeys, ollama, modelAccess } = options;
+  const { apiKeys, ollama, modelAccess, usage, clock } = options;
   app.decorateRequest("apiKeyId", null);
+
+  app.addHook("onReady", async () => {
+    await usage.deleteOlderThan(new Date(clock.now().getTime() - USAGE_RETENTION_MS).toISOString());
+  });
 
   app.register(
     async (scope) => {
@@ -99,11 +110,45 @@ export function registerOpenAiRoutes(app: FastifyInstance, options: OpenAiRoutes
     const payload = body as Record<string, unknown>;
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
     if (!model) throw openAiError(400, "You must provide a model parameter.", "missing_model");
+
+    const startedAt = Date.now();
+    const streamed = endpoint === "/v1/chat/completions" && payload.stream === true;
+    const record = (status: number, tokens = { promptTokens: 0, completionTokens: 0 }) =>
+      usage
+        .record({
+          keyId: request.apiKeyId!,
+          model,
+          endpoint: endpoint === "/v1/embeddings" ? "embeddings" : "chat",
+          status,
+          streamed,
+          ...tokens,
+          durationMs: Date.now() - startedAt,
+          createdAt: clock.now().toISOString()
+        })
+        .catch((error: unknown) => request.log.error({ error }, "Could not record API usage"));
+
     // A model the account may not use answers exactly like one that does not exist.
-    if (!(await allowedModels(request.account!)).some((candidate) => candidate.name === model)) throw modelNotFound(model);
+    if (!(await allowedModels(request.account!)).some((candidate) => candidate.name === model)) {
+      await record(404);
+      throw modelNotFound(model);
+    }
+
+    // Ask Ollama for the token count at the end of a stream even when the caller did not.
+    const callerWantsUsage = (payload.stream_options as { include_usage?: unknown } | undefined)?.include_usage === true;
+    const forwarded = streamed ? { ...payload, stream_options: { ...(payload.stream_options as object | undefined), include_usage: true } } : payload;
 
     const stop = new AbortController();
-    const upstream = await ollama.openAi({ endpoint, body: payload, signal: stop.signal });
+    let upstream;
+    try {
+      upstream = await ollama.openAi({ endpoint, body: forwarded, signal: stop.signal });
+    } catch (error) {
+      await record(error instanceof ModelDockError ? error.httpStatus : 502);
+      throw error;
+    }
+
+    const meter = upstream.contentType.includes("text/event-stream")
+      ? new StreamUsageMeter({ forwardUsageEvent: callerWantsUsage })
+      : new JsonUsageMeter();
 
     // From here the answer is passed through as it arrives.
     reply.hijack();
@@ -118,21 +163,30 @@ export function registerOpenAiRoutes(app: FastifyInstance, options: OpenAiRoutes
       if (!raw.writableFinished) stop.abort();
     };
     raw.on("close", onClose);
+    let broken = false;
     try {
       for await (const chunk of upstream.body) {
         if (stop.signal.aborted) break;
-        raw.write(chunk);
+        for (const piece of meter.pass(chunk)) raw.write(piece);
       }
     } catch (error) {
-      if (!stop.signal.aborted) request.log.error({ error }, "Forwarding to Ollama failed");
+      if (!stop.signal.aborted) {
+        broken = true;
+        request.log.error({ error }, "Forwarding to Ollama failed");
+      }
     } finally {
       raw.off("close", onClose);
     }
+
+    const { rest, usage: tokens } = meter.finish();
     if (stop.signal.aborted) {
+      await record(CLIENT_CLOSED, tokens);
       // The caller went away: ending politely would leave the socket open, so drop it.
       raw.destroy();
       return;
     }
+    for (const piece of rest) raw.write(piece);
+    await record(broken ? 502 : upstream.status, tokens);
     raw.end();
   }
 }

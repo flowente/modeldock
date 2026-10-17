@@ -142,3 +142,58 @@ describe("OpenAI-compatible API", () => {
     expect((await app.inject({ method: "GET", url: "/api/chat/conversations", headers: { cookie: adminCookie } })).json()).toEqual([]);
   });
 });
+
+describe("API usage", () => {
+  it("records every call with its tokens, and shows them per key", async () => {
+    const { app, adminCookie, adminKey } = await start();
+    const chat = { model: "llama3.1:8b", messages: [{ role: "user", content: "ciao" }] };
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: bearer(adminKey), payload: chat });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: bearer(adminKey), payload: { ...chat, stream: true } });
+    await app.inject({ method: "POST", url: "/v1/embeddings", headers: bearer(adminKey), payload: { model: "phi3:mini", input: "uno" } });
+    await app.inject({ method: "POST", url: "/v1/chat/completions", headers: bearer(adminKey), payload: { ...chat, model: "non-esiste" } });
+
+    const [key] = (await app.inject({ method: "GET", url: "/api/api-keys", headers: { cookie: adminCookie } })).json();
+    // The fake reply "Fake reply from llama3.1:8b to: ciao" is 6 words, counted as 6 tokens.
+    expect(key.usage).toEqual({ calls: 4, errors: 1, promptTokens: 5 + 5 + 3, completionTokens: 6 + 6 });
+
+    const detail = await app.inject({ method: "GET", url: `/api/api-keys/${key.id}/usage?days=7&offset=120`, headers: { cookie: adminCookie } });
+    expect(detail.statusCode).toBe(200);
+    const body = detail.json();
+    expect(body.totals).toEqual(key.usage);
+    expect(body.daily).toHaveLength(7);
+    expect(body.daily.reduce((sum: number, day: { calls: number }) => sum + day.calls, 0)).toBe(4);
+    expect(body.byModel.map((row: { model: string; calls: number }) => [row.model, row.calls])).toEqual([
+      ["llama3.1:8b", 2],
+      ["non-esiste", 1],
+      ["phi3:mini", 1]
+    ]);
+    expect(body.recent).toHaveLength(4);
+    expect(body.recent.find((entry: { streamed: boolean }) => entry.streamed)).toMatchObject({ endpoint: "chat", status: 200, completionTokens: 6 });
+    expect(body.recent.find((entry: { model: string }) => entry.model === "non-esiste")).toMatchObject({ status: 404 });
+    expect(JSON.stringify(body)).not.toContain("ciao");
+  });
+
+  it("the usage event a stream did not ask for is not passed on", async () => {
+    const { app, adminKey } = await start();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: bearer(adminKey),
+      payload: { model: "llama3.1:8b", messages: [{ role: "user", content: "ciao" }], stream: true }
+    });
+    expect(response.body).not.toContain("prompt_tokens");
+    const asked = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: bearer(adminKey),
+      payload: { model: "llama3.1:8b", messages: [{ role: "user", content: "ciao" }], stream: true, stream_options: { include_usage: true } }
+    });
+    expect(asked.body).toContain("prompt_tokens");
+  });
+
+  it("someone else's key usage is not visible to a member", async () => {
+    const { app, adminCookie, memberCookie } = await start();
+    const [adminKey] = (await app.inject({ method: "GET", url: "/api/api-keys", headers: { cookie: adminCookie } })).json();
+    expect((await app.inject({ method: "GET", url: `/api/api-keys/${adminKey.id}/usage`, headers: { cookie: memberCookie } })).statusCode).toBe(404);
+  });
+});

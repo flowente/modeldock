@@ -38,7 +38,20 @@ const SECTIONS: Section[] = [
   { id: "server", label: "Server", visible: (account) => account.role !== "member" }
 ];
 
-export function Settings({ account, section, theme, onAccountChanged }: { account: Account; section: string; theme: ThemeControl; onAccountChanged: () => Promise<void> }) {
+export function Settings({
+  account,
+  section,
+  detail,
+  theme,
+  onAccountChanged
+}: {
+  account: Account;
+  section: string;
+  /** What comes after the section in the address, such as one API key. */
+  detail?: string;
+  theme: ThemeControl;
+  onAccountChanged: () => Promise<void>;
+}) {
   const visible = SECTIONS.filter((candidate) => candidate.visible(account));
   const current = visible.find((candidate) => candidate.id === section) ?? visible[0]!;
 
@@ -62,7 +75,7 @@ export function Settings({ account, section, theme, onAccountChanged }: { accoun
         <div className="md-settings-content">
           {current.id === "account" ? <AccountSection account={account} onChanged={onAccountChanged} /> : null}
           {current.id === "aspetto" ? <AppearanceSection theme={theme} /> : null}
-          {current.id === "chiavi-api" ? <ApiKeysSection account={account} /> : null}
+          {current.id === "chiavi-api" ? <ApiKeysSection account={account} {...(detail ? { detail } : {})} /> : null}
           {current.id === "modelli" ? <ModelsSection /> : null}
           {current.id === "utenti" ? <UsersSection account={account} /> : null}
           {current.id === "dispositivi" ? <DevicesSection /> : null}

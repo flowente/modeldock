@@ -154,7 +154,10 @@ export function ChatApp() {
   } else if (!state.data.account) {
     content = <LoginScreen onDone={refresh} />;
   } else if (route === "impostazioni" || route.startsWith("impostazioni/")) {
-    content = <Settings account={state.data.account} section={route.split("/")[1] ?? ""} theme={themeControl} onAccountChanged={refresh} />;
+    const [, section = "", detail] = route.split("/");
+    content = (
+      <Settings account={state.data.account} section={section} {...(detail ? { detail: decodeURIComponent(detail) } : {})} theme={themeControl} onAccountChanged={refresh} />
+    );
   } else {
     content = (
       <ChatShell account={state.data.account} route={route} theme={themeControl.theme} onToggleTheme={themeControl.toggle} onSignedOut={refresh} />
