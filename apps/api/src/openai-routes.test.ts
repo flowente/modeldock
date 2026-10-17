@@ -75,6 +75,8 @@ describe("OpenAI-compatible API", () => {
       usage: { prompt_tokens: 5 }
     });
     expect(gateway.lastOpenAiRequest).toMatchObject({ endpoint: "/v1/chat/completions", body });
+    // Without it Windows PowerShell 5.1 garbles accents and emoji.
+    expect(response.headers["content-type"]).toBe("application/json; charset=utf-8");
   });
 
   it("streams a chat completion as server-sent events", async () => {

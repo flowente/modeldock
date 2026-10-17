@@ -154,7 +154,7 @@ export function registerOpenAiRoutes(app: FastifyInstance, options: OpenAiRoutes
     reply.hijack();
     const raw = reply.raw;
     raw.writeHead(upstream.status, {
-      "content-type": upstream.contentType,
+      "content-type": withCharset(upstream.contentType),
       "cache-control": "no-store",
       "x-accel-buffering": "no",
       "x-correlation-id": request.id
@@ -189,6 +189,14 @@ export function registerOpenAiRoutes(app: FastifyInstance, options: OpenAiRoutes
     await record(broken ? 502 : upstream.status, tokens);
     raw.end();
   }
+}
+
+/**
+ * Ollama answers "application/json" without a charset. Windows PowerShell 5.1 then reads the
+ * bytes as Latin-1 and accented letters and emoji come out garbled: say UTF-8 out loud.
+ */
+function withCharset(contentType: string): string {
+  return /charset=/i.test(contentType) ? contentType : `${contentType}; charset=utf-8`;
 }
 
 function toOpenAiModel(model: { name: string; modifiedAt?: string }) {
