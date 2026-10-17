@@ -3,7 +3,7 @@ import { ArrowLeft, Check, Copy, Trash2 } from "lucide-react";
 import { ApiKeysSection } from "./settings-api-keys.tsx";
 import { DevicesSection, ServerSection } from "./settings-server.tsx";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, type Account, type ModelPullJob, type Role, type StoredGroup } from "./chat-api.ts";
+import { api, type Account, type DevicesOverview, type ModelPullJob, type Role, type StoredGroup } from "./chat-api.ts";
 import { explain, type ThemeChoice, type ThemeControl } from "./ChatApp.tsx";
 import { copyText } from "./markdown.tsx";
 import "./settings.css";
@@ -659,6 +659,17 @@ function GroupPicker({ label, groups, selected, onChange }: { label: string; gro
   );
 }
 
+/**
+ * Where an invitation link must point. Opened from this computer, the page sits on 127.0.0.1,
+ * which on a phone means the phone itself: the link has to use the address on the network,
+ * through the device connection. Already on the network, the current address works as it is.
+ */
+function inviteBase(overview: DevicesOverview | undefined): string | null {
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname)) return null;
+  const target = overview?.connection.allowUnpairedBrowsers ? overview.connection.hosts[0] : undefined;
+  return target ? `https://${target.host}:${target.port}/` : null;
+}
+
 function InviteForm({ groups, onInvited }: { groups: StoredGroup[]; onInvited: () => Promise<void> }) {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -666,10 +677,12 @@ function InviteForm({ groups, onInvited }: { groups: StoredGroup[]; onInvited: (
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, retry: false });
+  const networkBase = inviteBase(devices.data);
   const invite = useMutation({
     mutationFn: () => api.invite({ displayName, email, role, groupIds }),
     onSuccess: async (result) => {
-      setLink(`${window.location.origin}${window.location.pathname}${result.acceptPath.replace(/^\//, "")}`);
+      setLink(`${networkBase ?? `${window.location.origin}${window.location.pathname}`}${result.acceptPath.replace(/^\//, "")}`);
       setCopied(false);
       setDisplayName("");
       setEmail("");
@@ -733,8 +746,10 @@ function InviteForm({ groups, onInvited }: { groups: StoredGroup[]; onInvited: (
       {link ? (
         <div className="md-invite-result">
           <p>
-            Manda questo link alla persona. Vale <strong>una volta sola</strong> e scade fra <strong>72 ore</strong>. Funziona dai dispositivi che
-            raggiungono questo indirizzo.
+            Manda questo link alla persona. Vale <strong>una volta sola</strong> e scade fra <strong>72 ore</strong>.
+            {link.startsWith("https://")
+              ? " Funziona dai dispositivi sullo stesso Wi-Fi di questo computer. Al primo accesso il browser mostrerà un avviso sul certificato: va accettato, il certificato è di ModelDock."
+              : " Attenzione: questo indirizzo funziona solo su questo computer, perché la connessione fra dispositivi è spenta."}
           </p>
           <div className="md-copy-row">
             <code>{link}</code>
