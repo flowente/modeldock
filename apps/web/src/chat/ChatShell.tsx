@@ -315,7 +315,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
                 {activeProject.description ? ` · ${activeProject.description}` : ""}
               </p>
             ) : null}
-            <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} autoFocus />
+            <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} projects={knownProjects} {...(currentProject ? { project: currentProject } : {})} projectLocked={Boolean(conversationId)} onChooseProject={chooseProject} onNewProject={() => setNewProjectOpen(true)} autoFocus />
             <div className="md-suggestions">
               {SUGGESTIONS.map((suggestion) => (
                 <button key={suggestion} type="button" className="md-ghost" onClick={() => void send(suggestion)} disabled={!model}>
@@ -338,7 +338,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
                   {notice}
                 </div>
               ) : null}
-              <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} />
+              <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} projects={knownProjects} {...(currentProject ? { project: currentProject } : {})} projectLocked={Boolean(conversationId)} onChooseProject={chooseProject} onNewProject={() => setNewProjectOpen(true)} />
               <p className="md-footnote">Le conversazioni restano su questo computer.</p>
             </div>
           </>
@@ -824,18 +824,42 @@ function Composer(props: {
   noModels: boolean;
   account: Account;
   commands: QuickCommand[];
+  /** Projects to start the chat in, and the one in use. */
+  projects: ProjectSummary[];
+  project?: ProjectSummary;
+  /** In a conversation already started the project is fixed: the button only says which. */
+  projectLocked: boolean;
+  onChooseProject: (id: string | null) => void;
+  onNewProject: () => void;
   autoFocus?: boolean;
   onSend: (text: string, command?: { id: string; name: string }) => Promise<void>;
   onStop: () => void;
 }) {
   const [text, setText] = useState("");
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const [plusOpen, setPlusOpen] = useState(false);
+  const [projectOpen, setProjectOpen] = useState(false);
   const active = parseCommand(text, props.commands);
   const slash = useSlashMenu(text, props.commands, (name) => {
     setText(`/${name} `);
     areaRef.current?.focus();
   });
+
+  // A click anywhere outside the message box closes its menus, the skill list included.
+  const { dismiss } = slash;
+  const anyMenuOpen = plusOpen || projectOpen || slash.open;
+  useEffect(() => {
+    if (!anyMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (formRef.current?.contains(event.target as Node)) return;
+      setPlusOpen(false);
+      setProjectOpen(false);
+      dismiss();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [anyMenuOpen, dismiss]);
 
   // Grow with the text, up to the limit set in CSS.
   useEffect(() => {
@@ -875,7 +899,7 @@ function Composer(props: {
           : "";
 
   return (
-    <form className="md-composer" onSubmit={submit} style={{ position: "relative" }}>
+    <form ref={formRef} className="md-composer" onSubmit={submit} style={{ position: "relative" }}>
       {slash.open ? <SlashMenu {...slash} /> : null}
       <label htmlFor="md-message" className="md-sr-only">
         Messaggio
@@ -901,7 +925,10 @@ function Composer(props: {
             className="md-ghost md-icon-button md-plus"
             aria-label="Altro"
             aria-expanded={plusOpen}
-            onClick={() => setPlusOpen((value) => !value)}
+            onClick={() => {
+              setProjectOpen(false);
+              setPlusOpen((value) => !value);
+            }}
             disabled={props.noModels}
           >
             <Plus size={18} aria-hidden="true" />
@@ -920,6 +947,70 @@ function Composer(props: {
               >
                 <span>Skill</span>
                 <span className="md-menu-detail">/</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="md-ghost md-project-button"
+            aria-label={props.project ? `Progetto: ${props.project.name}` : "Scegli un progetto"}
+            aria-expanded={projectOpen}
+            title={props.projectLocked ? "Il progetto di una chat già iniziata non si cambia" : "Progetto"}
+            onClick={() => {
+              setPlusOpen(false);
+              setProjectOpen((value) => !value);
+            }}
+            disabled={props.projectLocked || props.noModels}
+            data-active={Boolean(props.project)}
+          >
+            <Folder size={17} aria-hidden="true" />
+            {props.project ? <span>{props.project.name}</span> : null}
+          </button>
+          {projectOpen ? (
+            <div className="md-menu md-menu-plus" role="menu" aria-label="Progetto">
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={!props.project}
+                className="md-menu-item"
+                onClick={() => {
+                  setProjectOpen(false);
+                  props.onChooseProject(null);
+                }}
+              >
+                <span>Nessun progetto</span>
+                {!props.project ? <Check size={15} aria-hidden="true" /> : null}
+              </button>
+              {props.projects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={props.project?.id === project.id}
+                  className="md-menu-item"
+                  onClick={() => {
+                    setProjectOpen(false);
+                    props.onChooseProject(project.id);
+                  }}
+                >
+                  <span>{project.name}</span>
+                  {props.project?.id === project.id ? <Check size={15} aria-hidden="true" /> : null}
+                </button>
+              ))}
+              <div className="md-menu-separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className="md-menu-item"
+                onClick={() => {
+                  setProjectOpen(false);
+                  props.onNewProject();
+                }}
+              >
+                <span>Nuovo progetto…</span>
+                <Plus size={15} aria-hidden="true" />
               </button>
             </div>
           ) : null}

@@ -17,6 +17,8 @@ export interface SlashMenuState {
   setHighlighted: (index: number) => void;
   choose: (name: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  /** Closes the menu for the text as it is now, as Escape does. */
+  dismiss: () => void;
 }
 
 /**
@@ -59,7 +61,7 @@ export function useSlashMenu(text: string, commands: QuickCommand[], onChoose: (
     return false;
   };
 
-  return { open, matches, highlighted, setHighlighted, choose, onKeyDown };
+  return { open, matches, highlighted, setHighlighted, choose, onKeyDown, dismiss: () => setDismissed(text) };
 }
 
 export function SlashMenu({ matches, highlighted, setHighlighted, choose }: SlashMenuState) {

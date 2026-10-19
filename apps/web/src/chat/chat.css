@@ -1355,3 +1355,35 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+.md-project-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  max-width: 200px;
+  padding: 0 8px;
+  border-radius: 10px;
+  color: var(--md-text-2);
+  font-size: 13px;
+}
+
+.md-project-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-project-button[data-active="true"] {
+  color: var(--md-accent);
+  background: var(--md-accent-soft);
+}
+
+.md-project-button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.md-project-button:disabled:not([data-active="true"]) {
+  display: none;
+}
