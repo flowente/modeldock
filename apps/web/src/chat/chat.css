@@ -1257,3 +1257,101 @@
   font-size: 11px;
   color: var(--md-muted);
 }
+
+.md-projects-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+
+.md-projects-add {
+  width: 26px;
+  height: 26px;
+}
+
+.md-project-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.md-project-row .md-project-item {
+  flex-grow: 1;
+  min-width: 0;
+  padding-right: 30px;
+}
+
+.md-project-edit {
+  position: absolute;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  color: var(--md-muted);
+  opacity: 0;
+}
+
+.md-project-row:hover .md-project-edit,
+.md-project-edit:focus-visible {
+  opacity: 1;
+}
+
+/* Touch screens have no hover: keep the pencil visible. */
+@media (hover: none) {
+  .md-project-edit {
+    opacity: 1;
+  }
+}
+
+/* ---------- Dialog ---------- */
+
+.md-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px 22px;
+  border: 1px solid var(--md-line);
+  border-radius: 16px;
+  background: var(--md-panel);
+  color: var(--md-text);
+  box-shadow: var(--md-shadow);
+}
+
+.md-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.md-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.md-dialog-head h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 500;
+}
+
+.md-dialog .md-muted {
+  margin: 0;
+  font-size: 13px;
+}
+
+.md-field .md-dialog-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--md-line);
+  border-radius: 10px;
+  background: var(--md-bg);
+  color: var(--md-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.md-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

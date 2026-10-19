@@ -11,11 +11,11 @@ const OLLAMA_DEFAULT_CONTEXT = 4096;
 /** Roughly, for Italian and English text. Ollama counts exactly only once the model reads it. */
 const CHARS_PER_TOKEN = 3.5;
 
-export function ProjectsSection({ account }: { account: Account }) {
+export function ProjectsSection({ account, openId }: { account: Account; /** A project to open for editing, from the chat. */ openId?: string }) {
   const isAdmin = account.role === "admin";
   const queryClient = useQueryClient();
   const projects = useQuery({ queryKey: ["projects-manage"], queryFn: api.projectsToManage });
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(openId ?? null);
   const [formKey, setFormKey] = useState(0);
   const editing = useQuery({ queryKey: ["project", editingId], queryFn: () => api.project(editingId!), enabled: Boolean(editingId) });
   const refresh = async () => {

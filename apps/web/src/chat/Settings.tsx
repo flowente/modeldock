@@ -79,7 +79,7 @@ export function Settings({
         <div className="md-settings-content">
           {current.id === "account" ? <AccountSection account={account} onChanged={onAccountChanged} /> : null}
           {current.id === "aspetto" ? <AppearanceSection theme={theme} /> : null}
-          {current.id === "progetti" ? <ProjectsSection account={account} /> : null}
+          {current.id === "progetti" ? <ProjectsSection account={account} {...(detail ? { openId: detail } : {})} /> : null}
           {current.id === "skill" ? <CommandsSection account={account} /> : null}
           {current.id === "chiavi-api" ? <ApiKeysSection account={account} {...(detail ? { detail } : {})} /> : null}
           {current.id === "modelli" ? <ModelsSection /> : null}

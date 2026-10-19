@@ -22,6 +22,7 @@ import { api, streamMessage, type Account, type ChatMessage, type ChatModel, typ
 import { explain, Mark, navigate, type ThemePreference } from "./ChatApp.tsx";
 import { capabilityWords, SketchWords } from "./SketchWords.tsx";
 import { parseCommand, SlashMenu, useSlashMenu } from "./quick-commands.tsx";
+import { NewProjectDialog } from "./project-dialog.tsx";
 import { CopyButton, Markdown } from "./markdown.tsx";
 
 const MODEL_KEY = "modeldock.model";
@@ -131,6 +132,8 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
       .catch(() => undefined)
       .finally(() => void queryClient.invalidateQueries({ queryKey: ["chat-models"] }));
   };
+
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   const chooseProject = (id: string | null) => {
     setActiveProjectId(id);
@@ -247,6 +250,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         projects={knownProjects}
         activeProjectId={activeProject?.id ?? null}
         onChooseProject={chooseProject}
+        onNewProject={() => setNewProjectOpen(true)}
         activeId={conversationId}
         search={search}
         onSearch={setSearch}
@@ -258,6 +262,15 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         }}
       />
       <div className="md-scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+      <NewProjectDialog
+        open={newProjectOpen}
+        onClose={() => setNewProjectOpen(false)}
+        onCreated={async (project) => {
+          setNewProjectOpen(false);
+          await queryClient.invalidateQueries({ queryKey: ["projects"] });
+          chooseProject(project.id);
+        }}
+      />
 
       <main className="md-main">
         <header className="md-topbar">
@@ -362,6 +375,7 @@ function Sidebar(props: {
   projects: ProjectSummary[];
   activeProjectId: string | null;
   onChooseProject: (id: string | null) => void;
+  onNewProject: () => void;
   activeId?: string;
   search: string;
   onSearch: (value: string) => void;
@@ -393,29 +407,40 @@ function Sidebar(props: {
       </div>
 
       <nav className="md-projects" aria-label="Progetti">
-        <div className="md-eyebrow">Progetti</div>
+        <div className="md-projects-head">
+          <div className="md-eyebrow">Progetti</div>
+          <button type="button" className="md-ghost md-icon-button md-projects-add" aria-label="Nuovo progetto" onClick={props.onNewProject}>
+            <Plus size={15} aria-hidden="true" />
+          </button>
+        </div>
         {props.projects.length === 0 ? (
-          <a className="md-project-item md-project-new" href="#/impostazioni/progetti">
+          <button type="button" className="md-project-item md-project-new" onClick={props.onNewProject}>
             <Plus size={14} aria-hidden="true" />
             <span>Crea un progetto</span>
-          </a>
+          </button>
         ) : (
           <>
             <button type="button" className="md-project-item" aria-pressed={props.activeProjectId === null} onClick={() => props.onChooseProject(null)}>
               <span>Tutte le chat</span>
             </button>
             {props.projects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                className="md-project-item"
-                aria-pressed={props.activeProjectId === project.id}
-                onClick={() => props.onChooseProject(project.id)}
-                title={project.description || project.name}
-              >
-                <Folder size={14} aria-hidden="true" />
-                <span>{project.name}</span>
-              </button>
+              <div key={project.id} className="md-project-row">
+                <button
+                  type="button"
+                  className="md-project-item"
+                  aria-pressed={props.activeProjectId === project.id}
+                  onClick={() => props.onChooseProject(project.id)}
+                  title={project.description || project.name}
+                >
+                  <Folder size={14} aria-hidden="true" />
+                  <span>{project.name}</span>
+                </button>
+                {project.editable ? (
+                  <a className="md-ghost md-icon-button md-project-edit" href={`#/impostazioni/progetti/${encodeURIComponent(project.id)}`} aria-label={`Modifica ${project.name}`}>
+                    <Pencil size={13} aria-hidden="true" />
+                  </a>
+                ) : null}
+              </div>
             ))}
           </>
         )}
