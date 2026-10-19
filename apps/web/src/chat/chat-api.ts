@@ -124,6 +124,8 @@ export interface AuthState {
 export interface ChatModel {
   name: string;
   sizeBytes: number;
+  /** As Ollama reports them: "completion", "tools", "thinking", "vision"... */
+  capabilities: string[];
 }
 
 export type StreamEvent =

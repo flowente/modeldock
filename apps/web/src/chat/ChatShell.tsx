@@ -19,6 +19,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { api, streamMessage, type Account, type ChatMessage, type ChatModel, type Conversation, type StreamEvent } from "./chat-api.ts";
 import { explain, Mark, navigate, type ThemePreference } from "./ChatApp.tsx";
+import { capabilityWords, SketchWords } from "./SketchWords.tsx";
 import { CopyButton, Markdown } from "./markdown.tsx";
 
 const MODEL_KEY = "modeldock.model";
@@ -82,6 +83,12 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const [switchedTo, setSwitchedTo] = useState<string | null>(null);
   const available = models.data ?? [];
   const model = pickModel(available, switchedTo ?? detail.data?.conversation.model, chosenModel);
+  const currentModel = available.find((candidate) => candidate.name === model);
+  // A server from before this field sends none: the words fall back to the ones every model has.
+  const capabilities = currentModel?.capabilities ?? [];
+  const capabilityKey = capabilities.join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sketchWords = useMemo(() => capabilityWords(capabilities), [capabilityKey]);
   const chooseModel = (name: string) => {
     setSwitchedTo(name);
     setChosenModel(name);
@@ -210,6 +217,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
           <section className="md-welcome">
             <Mark size={44} />
             <h1>Ciao {firstName(account.displayName)}, su cosa lavoriamo?</h1>
+            {currentModel ? <SketchWords words={sketchWords} label={`con ${shortModelName(currentModel.name)} puoi`} /> : null}
             <Composer model={model} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} autoFocus />
             <div className="md-suggestions">
               {SUGGESTIONS.map((suggestion) => (
@@ -249,6 +257,11 @@ function pickModel(available: ChatModel[], conversationModel: string | undefined
   if (conversationModel && names.includes(conversationModel)) return conversationModel;
   if (chosen && names.includes(chosen)) return chosen;
   return names[0];
+}
+
+/** "gpt-oss:latest" → "gpt-oss"; a size tag like ":270m" stays, it tells models apart. */
+function shortModelName(name: string): string {
+  return name.replace(/:latest$/, "");
 }
 
 function firstName(name: string): string {

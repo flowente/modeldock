@@ -29,7 +29,7 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
   // What a model can do never changes for a given name and tag: ask Ollama once.
   const capabilities = new Map<string, Promise<string[]>>();
 
-  async function canChat(name: string): Promise<boolean> {
+  async function capabilitiesOf(name: string): Promise<string[]> {
     let known = capabilities.get(name);
     if (!known) {
       known = ollama.getModelCapabilities(name).catch(() => {
@@ -38,7 +38,11 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
       });
       capabilities.set(name, known);
     }
-    const list = await known;
+    return known;
+  }
+
+  async function canChat(name: string): Promise<boolean> {
+    const list = await capabilitiesOf(name);
     // An Ollama too old to report capabilities gets the benefit of the doubt.
     return list.length === 0 || list.includes("completion");
   }
@@ -51,7 +55,8 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
     for (const model of installed) {
       if (!(await canChat(model.name))) continue;
       const policy = await modelAccess.ensurePolicy(model.name);
-      if (canUseModel(policy, user)) result.push({ name: model.name, sizeBytes: model.sizeBytes });
+      // What the model can do travels with it: the welcome screen shows it.
+      if (canUseModel(policy, user)) result.push({ name: model.name, sizeBytes: model.sizeBytes, capabilities: await capabilitiesOf(model.name) });
     }
     return result;
   }
