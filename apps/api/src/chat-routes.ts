@@ -265,8 +265,17 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
       status: failure ? "error" : stop.signal.aborted ? "stopped" : "complete",
       createdAt: clock.now().toISOString()
     };
-    await chats.insertMessage(assistantMessage);
-    await chats.updateConversation(conversation.id, { updatedAt: assistantMessage.createdAt });
+    try {
+      await chats.insertMessage(assistantMessage);
+      await chats.updateConversation(conversation.id, { updatedAt: assistantMessage.createdAt });
+    } catch (error) {
+      // The conversation was deleted while the model was answering: nothing left to save the
+      // reply into. Close the stream with a reason instead of leaving it hanging.
+      request.log.warn({ error, conversationId: conversation.id }, "Reply not saved: the conversation is gone");
+      if (!stop.signal.aborted) send({ type: "error", error: { code: "CHAT_NOT_FOUND", message: "The conversation was deleted while the reply was arriving." } });
+      if (!raw.writableEnded) raw.end();
+      return;
+    }
 
     if (stop.signal.aborted) {
       // The other side is gone: ending politely would leave the socket open, so drop it.

@@ -296,3 +296,36 @@ describe("models in memory", () => {
     expect(reply.some((event) => event.type === "status")).toBe(false);
   });
 });
+
+describe("a conversation deleted mid-reply", () => {
+  it("ends the reply with a reason instead of leaving it open", async () => {
+    const gateway = new FakeOllamaGateway();
+    gateway.chatDelayMs = 30;
+    const app = await start({ ollamaGateway: gateway });
+    const { adminCookie } = await signedIn(app);
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = app.server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/chat/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ model: "llama3.1:8b", content: "ciao" })
+    });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let deleted = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      const conversation = text.split("\n").map((line) => (line ? (JSON.parse(line) as ChatStreamEvent) : null)).find((event) => event?.type === "conversation");
+      if (!deleted && conversation?.type === "conversation") {
+        deleted = true;
+        await app.inject({ method: "DELETE", url: `/api/chat/conversations/${conversation.conversation.id}`, headers: { cookie: adminCookie } });
+      }
+    }
+    const last = text.trim().split("\n").map((line) => JSON.parse(line) as ChatStreamEvent).at(-1);
+    expect(last).toMatchObject({ type: "error", error: { code: "CHAT_NOT_FOUND" } });
+  });
+});
