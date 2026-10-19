@@ -105,10 +105,10 @@ export function explain(error: unknown): string {
     API_KEY_LIMIT: "Hai già 25 chiavi attive: revocane una che non usi più.",
     API_KEY_NOT_FOUND: "Questa chiave non esiste più: forse è già stata revocata.",
     QUICK_COMMAND_NAME_INVALID: "Il nome usa lettere minuscole, numeri e trattini, fino a 32 caratteri.",
-    QUICK_COMMAND_NAME_TAKEN: "Esiste già un comando con questo nome.",
-    QUICK_COMMAND_INSTRUCTION_INVALID: "Scrivi l'istruzione (al massimo 4000 caratteri).",
+    QUICK_COMMAND_NAME_TAKEN: "Esiste già una skill con questo nome.",
+    QUICK_COMMAND_INSTRUCTION_INVALID: "Scrivi le istruzioni (al massimo 20.000 caratteri).",
     QUICK_COMMAND_DESCRIPTION_INVALID: "La descrizione è al massimo di 120 caratteri.",
-    QUICK_COMMAND_NOT_FOUND: "Questo comando non esiste più.",
+    QUICK_COMMAND_NOT_FOUND: "Questa skill non esiste più.",
     INVALID_INPUT: "Manca un dato obbligatorio."
   };
   return messages[error.code] ?? "Qualcosa non ha funzionato. Riprova.";

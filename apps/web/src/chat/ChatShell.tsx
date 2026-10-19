@@ -748,7 +748,7 @@ function Composer(props: {
     : props.streaming
       ? `${props.model} sta rispondendo…`
       : active
-        ? `/${active.command.name} · ${active.command.description || "comando rapido"}${active.rest.trim() ? "" : " · scrivi il testo dopo il comando"}`
+        ? `/${active.command.name} · ${active.command.description || "skill"}${active.rest.trim() ? "" : " · scrivi il testo dopo il nome della skill"}`
         : props.model
           ? `${props.model} · ${readiness(props.modelInfo)}`
           : "";
@@ -797,7 +797,7 @@ function Composer(props: {
                   areaRef.current?.focus();
                 }}
               >
-                <span>Comandi rapidi</span>
+                <span>Skill</span>
                 <span className="md-menu-detail">/</span>
               </button>
             </div>

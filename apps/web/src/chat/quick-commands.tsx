@@ -64,7 +64,7 @@ export function useSlashMenu(text: string, commands: QuickCommand[], onChoose: (
 
 export function SlashMenu({ matches, highlighted, setHighlighted, choose }: SlashMenuState) {
   return (
-    <div className="md-menu md-menu-slash" role="listbox" aria-label="Comandi rapidi">
+    <div className="md-menu md-menu-slash" role="listbox" aria-label="Skill">
       {matches.map((command, index) => (
         <button
           key={command.id}
@@ -81,7 +81,7 @@ export function SlashMenu({ matches, highlighted, setHighlighted, choose }: Slas
           }}
         >
           <span className="md-slash-name">/{command.name}</span>
-          <span className="md-menu-detail">{command.description || (command.shared ? "Comando condiviso" : "Tuo comando")}</span>
+          <span className="md-menu-detail">{command.description || (command.shared ? "Skill condivisa" : "Tua skill")}</span>
         </button>
       ))}
     </div>

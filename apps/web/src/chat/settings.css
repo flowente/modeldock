@@ -981,3 +981,35 @@
   line-height: 1.5;
   resize: vertical;
 }
+
+.md-skill-editor-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.md-field .md-skill-source {
+  font-family: var(--md-mono);
+  font-size: 13px;
+  min-height: 200px;
+}
+
+.md-skill-preview {
+  font-size: 14px;
+  color: var(--md-text);
+}
+
+.md-skill-preview-box {
+  min-height: 200px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--md-line);
+  border-radius: 10px;
+  background: var(--md-panel);
+}
+
+.md-skill-warning {
+  color: var(--md-danger);
+}

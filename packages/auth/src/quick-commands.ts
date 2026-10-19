@@ -3,7 +3,8 @@ import type { Account, Clock, QuickCommand, QuickCommandStore } from "@modeldock
 import { ModelDockError } from "@modeldock/core";
 
 const MAX_DESCRIPTION = 120;
-const MAX_INSTRUCTION = 4000;
+/** Room for a real skill written in Markdown, like the ones made for other assistants. */
+const MAX_INSTRUCTION = 20_000;
 
 export interface QuickCommandView {
   id: string;
@@ -27,8 +28,9 @@ function fail(code: string, message: string, httpStatus: number): never {
 }
 
 /**
- * Commands called from the chat with "/name": a saved instruction the model receives with the
- * message. Shared ones are for everyone and only administrators manage them; anyone can keep
+ * Skills, called from the chat with "/name" (named "quick commands" in the code and the
+ * database, "skill" in the interface): a saved instruction, Markdown welcome, that the model
+ * receives with the message. Shared ones are for everyone and only administrators manage them; anyone can keep
  * personal ones. A personal command cannot take a shared one's name, so "/name" is never ambiguous.
  */
 export class QuickCommandService {
