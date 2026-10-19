@@ -17,9 +17,10 @@ import {
   Trash2
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { api, streamMessage, type Account, type ChatMessage, type ChatModel, type Conversation, type StreamEvent } from "./chat-api.ts";
+import { api, streamMessage, type Account, type ChatMessage, type ChatModel, type Conversation, type QuickCommand, type StreamEvent } from "./chat-api.ts";
 import { explain, Mark, navigate, type ThemePreference } from "./ChatApp.tsx";
 import { capabilityWords, SketchWords } from "./SketchWords.tsx";
+import { parseCommand, SlashMenu, useSlashMenu } from "./quick-commands.tsx";
 import { CopyButton, Markdown } from "./markdown.tsx";
 
 const MODEL_KEY = "modeldock.model";
@@ -41,6 +42,8 @@ interface PendingTurn {
   /** Same for the reply, once it is complete: until the live copy goes away, the saved one stays hidden. */
   assistantMessageId?: string;
   userText: string;
+  /** The quick command the question was sent with, shown as a label on it. */
+  command?: string;
   answer: string;
   error?: string;
   /** What is happening before the first word, and since when. */
@@ -64,6 +67,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const [notice, setNotice] = useState<string | null>(null);
   const stopRef = useRef<AbortController | null>(null);
 
+  const commands = useQuery({ queryKey: ["quick-commands"], queryFn: api.commands });
   const models = useQuery({
     queryKey: ["chat-models"],
     queryFn: api.models,
@@ -126,14 +130,14 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
 
   const streaming = pending !== null && !pending.error;
 
-  const send = async (text: string) => {
+  const send = async (text: string, command?: { id: string; name: string }) => {
     const content = text.trim();
     if (!content || !model || streaming) return;
     const controller = new AbortController();
     stopRef.current = controller;
     setNotice(null);
     let targetId = conversationId;
-    setPending({ conversationId: targetId, userText: content, answer: "" });
+    setPending({ conversationId: targetId, userText: content, answer: "", ...(command ? { command: command.name } : {}) });
 
     const onEvent = (event: StreamEvent) => {
       if (event.type === "conversation") {
@@ -160,7 +164,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
     };
 
     try {
-      await streamMessage({ conversationId, model, content }, onEvent, controller.signal);
+      await streamMessage({ conversationId, model, content, ...(command ? { commandId: command.id } : {}) }, onEvent, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted) {
         setPending((current) => (current ? { ...current, error: explain(error) } : current));
@@ -243,7 +247,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
               <h1>Ciao {firstName(account.displayName)}, su cosa lavoriamo?</h1>
               {currentModel ? <SketchWords words={sketchWords} /> : null}
             </div>
-            <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} autoFocus />
+            <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} autoFocus />
             <div className="md-suggestions">
               {SUGGESTIONS.map((suggestion) => (
                 <button key={suggestion} type="button" className="md-ghost" onClick={() => void send(suggestion)} disabled={!model}>
@@ -266,7 +270,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
                   {notice}
                 </div>
               ) : null}
-              <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} />
+              <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} />
               <p className="md-footnote">Le conversazioni restano su questo computer.</p>
             </div>
           </>
@@ -611,16 +615,14 @@ function Thread({ messages, loading, missing, pending }: { messages: ChatMessage
         {loading ? <p className="md-empty-note">Caricamento…</p> : null}
         {messages.map((message) =>
           message.role === "user" ? (
-            <div key={message.id} className="md-user-message">
-              {message.content}
-            </div>
+            <UserMessage key={message.id} text={message.content} {...(message.command ? { command: message.command } : {})} />
           ) : (
             <AssistantMessage key={message.id} text={message.content} status={message.status} />
           )
         )}
         {pending ? (
           <>
-            <div className="md-user-message">{pending.userText}</div>
+            <UserMessage text={pending.userText} {...(pending.command ? { command: pending.command } : {})} />
             {pending.error ? (
               <div className="md-banner" data-tone="error" role="alert">
                 {pending.error}
@@ -633,6 +635,15 @@ function Thread({ messages, loading, missing, pending }: { messages: ChatMessage
         <div ref={endRef} />
       </div>
     </section>
+  );
+}
+
+function UserMessage({ text, command }: { text: string; command?: string }) {
+  return (
+    <div className="md-user-message">
+      {command ? <span className="md-command-chip">/{command}</span> : null}
+      {text}
+    </div>
   );
 }
 
@@ -691,12 +702,19 @@ function Composer(props: {
   streaming: boolean;
   noModels: boolean;
   account: Account;
+  commands: QuickCommand[];
   autoFocus?: boolean;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, command?: { id: string; name: string }) => Promise<void>;
   onStop: () => void;
 }) {
   const [text, setText] = useState("");
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const active = parseCommand(text, props.commands);
+  const slash = useSlashMenu(text, props.commands, (name) => {
+    setText(`/${name} `);
+    areaRef.current?.focus();
+  });
 
   // Grow with the text, up to the limit set in CSS.
   useEffect(() => {
@@ -706,15 +724,19 @@ function Composer(props: {
     area.style.height = `${area.scrollHeight}px`;
   }, [text]);
 
+  // With a command, what goes to the model is the text after "/name"; it cannot be empty.
+  const sendable = active ? active.rest.trim().length > 0 : text.trim().length > 0;
+
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (!text.trim() || props.streaming || !props.model) return;
-    const value = text;
+    if (!sendable || props.streaming || !props.model) return;
+    const value = active ? active.rest : text;
     setText("");
-    void props.onSend(value);
+    void props.onSend(value, active ? { id: active.command.id, name: active.command.name } : undefined);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.onKeyDown(event)) return;
     // Enter sends, Shift+Enter starts a new line. Not while an IME is composing a word.
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) submit(event);
   };
@@ -725,12 +747,15 @@ function Composer(props: {
       : "Nessun modello disponibile: scaricane uno dal pannello del server."
     : props.streaming
       ? `${props.model} sta rispondendo…`
-      : props.model
-        ? `${props.model} · ${readiness(props.modelInfo)}`
-        : "";
+      : active
+        ? `/${active.command.name} · ${active.command.description || "comando rapido"}${active.rest.trim() ? "" : " · scrivi il testo dopo il comando"}`
+        : props.model
+          ? `${props.model} · ${readiness(props.modelInfo)}`
+          : "";
 
   return (
-    <form className="md-composer" onSubmit={submit}>
+    <form className="md-composer" onSubmit={submit} style={{ position: "relative" }}>
+      {slash.open ? <SlashMenu {...slash} /> : null}
       <label htmlFor="md-message" className="md-sr-only">
         Messaggio
       </label>
@@ -749,13 +774,42 @@ function Composer(props: {
         autoFocus={props.autoFocus}
       />
       <div className="md-composer-row">
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="md-ghost md-icon-button md-plus"
+            aria-label="Altro"
+            aria-expanded={plusOpen}
+            onClick={() => setPlusOpen((value) => !value)}
+            disabled={props.noModels}
+          >
+            <Plus size={18} aria-hidden="true" />
+          </button>
+          {plusOpen ? (
+            <div className="md-menu md-menu-plus" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="md-menu-item"
+                onClick={() => {
+                  setPlusOpen(false);
+                  setText("/");
+                  areaRef.current?.focus();
+                }}
+              >
+                <span>Comandi rapidi</span>
+                <span className="md-menu-detail">/</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
         <span className="md-composer-hint">{hint}</span>
         {props.streaming ? (
           <button type="button" className="md-send" onClick={props.onStop} aria-label="Ferma la risposta">
             <Square size={14} fill="currentColor" aria-hidden="true" />
           </button>
         ) : (
-          <button type="submit" className="md-send" aria-label="Invia" disabled={!text.trim() || !props.model}>
+          <button type="submit" className="md-send" aria-label="Invia" disabled={!sendable || !props.model}>
             <ArrowUp size={18} aria-hidden="true" />
           </button>
         )}

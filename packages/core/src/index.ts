@@ -340,6 +340,31 @@ export interface ChatMessage {
   model?: string;
   status: ChatMessageStatus;
   createdAt: string;
+  /** The quick command the message was sent with, by name ("riassumi"). */
+  command?: string;
+}
+
+/**
+ * A saved instruction called from the chat with "/name". Shared ones (no owner) are for
+ * everyone and managed by administrators; personal ones belong to one account.
+ */
+export interface QuickCommand {
+  id: string;
+  ownerId?: string;
+  name: string;
+  description: string;
+  instruction: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuickCommandStore {
+  /** Shared commands plus the account's own, by name. */
+  listVisible(accountId: string): Promise<QuickCommand[]>;
+  findById(id: string): Promise<QuickCommand | undefined>;
+  insert(command: QuickCommand): Promise<void>;
+  update(id: string, patch: { name: string; description: string; instruction: string; updatedAt: string }): Promise<void>;
+  delete(id: string): Promise<void>;
 }
 
 export interface ChatStore {

@@ -204,7 +204,11 @@ export class FakeOllamaGateway implements OllamaGateway {
     return { loadMs: wasLoaded ? 0 : this.loadMs };
   }
 
+  /** The last conversation sent to the model, for tests to inspect what it received. */
+  public lastChatInput: ChatInput | undefined;
+
   public async *chat(input: ChatInput): AsyncIterable<ChatChunk> {
+    this.lastChatInput = input;
     const question = input.messages.at(-1)?.content ?? "";
     const words = `Fake reply from ${input.model} to: ${question}`.split(" ");
     // Like Ollama: answering loads the model, and the last chunk says how long that took.

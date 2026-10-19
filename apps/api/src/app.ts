@@ -22,11 +22,11 @@ import {
   type OllamaSetupStatus,
   type SystemResources
 } from "@modeldock/core";
-import { AccountService, ApiKeyService } from "@modeldock/auth";
+import { AccountService, ApiKeyService, QuickCommandService } from "@modeldock/auth";
 import { createDiagnosticRegistry } from "@modeldock/diagnostics";
 import { FileStateStore, LinkRegistry, listLanAddresses, loadOrCreateIdentity, startLinkServer } from "@modeldock/link";
 import { OllamaHttpGateway } from "@modeldock/ollama-adapter";
-import { openDatabase, SqliteAccountStore, SqliteApiKeyStore, SqliteApiUsageStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore } from "@modeldock/storage";
+import { openDatabase, SqliteAccountStore, SqliteApiKeyStore, SqliteApiUsageStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore, SqliteQuickCommandStore } from "@modeldock/storage";
 import { createFakeDependencies } from "@modeldock/testing";
 import { registerApiKeysRoutes } from "./api-keys-routes.ts";
 import { registerAccountRoutes } from "./auth-routes.ts";
@@ -74,6 +74,7 @@ interface RuntimeDependencies {
   accounts: AccountService;
   apiKeys: ApiKeyService;
   apiUsage: SqliteApiUsageStore;
+  quickCommands: QuickCommandService;
   chats: SqliteChatStore;
   storage: { persistent: boolean; location: string; close(): void };
   clock: Clock;
@@ -128,6 +129,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     chats: dependencies.chats,
     ollama: dependencies.ollama,
     modelAccess: dependencies.modelAccess,
+    quickCommands: dependencies.quickCommands,
     clock: dependencies.clock
   });
   registerApiKeysRoutes(app, { apiKeys: dependencies.apiKeys, usage: dependencies.apiUsage, auditStore: dependencies.auditStore, clock: dependencies.clock });
@@ -447,6 +449,7 @@ function withStorage<T extends ReturnType<typeof createFakeDependencies>>(fakes:
     accounts: new AccountService(accountStore, clock),
     apiKeys: new ApiKeyService(new SqliteApiKeyStore(database), accountStore, clock),
     apiUsage: new SqliteApiUsageStore(database),
+    quickCommands: new QuickCommandService(new SqliteQuickCommandStore(database), clock),
     chats: new SqliteChatStore(database),
     storage: { persistent, location: databasePath ?? ":memory:", close: () => database.close() },
     ...(persistent

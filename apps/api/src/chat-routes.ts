@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { can } from "@modeldock/auth";
+import { can, type QuickCommandService } from "@modeldock/auth";
 import type { Account, ChatMessage, ChatStore, ChatTurn, Clock, Conversation, ModelAccessStore, OllamaGateway } from "@modeldock/core";
 import { canUseModel, ModelDockError } from "@modeldock/core";
 
@@ -13,6 +13,7 @@ export interface ChatRoutesOptions {
   chats: ChatStore;
   ollama: OllamaGateway;
   modelAccess: ModelAccessStore;
+  quickCommands: QuickCommandService;
   clock: Clock;
 }
 
@@ -30,7 +31,7 @@ export type ChatStreamEvent =
   | { type: "error"; error: { code: string; message: string }; message?: ChatMessage };
 
 export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOptions): void {
-  const { chats, ollama, modelAccess, clock } = options;
+  const { chats, ollama, modelAccess, quickCommands, clock } = options;
   // What a model can do never changes for a given name and tag: ask Ollama once.
   const capabilities = new Map<string, Promise<string[]>>();
 
@@ -99,6 +100,49 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
   }
 
   app.get("/api/chat/models", async (request) => allowedModels(requireChatAccount(request)));
+
+  // ---- Quick commands: "/name" in the chat ----
+
+  type CommandBody = { name?: string; description?: string; instruction?: string; shared?: boolean };
+  const canManageShared = (account: Account) => can(account.role, "accounts:manage");
+
+  app.get("/api/chat/commands", async (request) => {
+    const account = requireChatAccount(request);
+    return quickCommands.list(account, canManageShared(account));
+  });
+
+  app.post<{ Body: CommandBody }>("/api/chat/commands", async (request, reply) => {
+    const account = requireChatAccount(request);
+    const body = request.body ?? {};
+    const created = await quickCommands.create({
+      account,
+      shared: body.shared === true,
+      canManageShared: canManageShared(account),
+      name: body.name,
+      description: body.description,
+      instruction: body.instruction
+    });
+    return reply.status(201).send(created);
+  });
+
+  app.put<{ Params: { id: string }; Body: CommandBody }>("/api/chat/commands/:id", async (request) => {
+    const account = requireChatAccount(request);
+    const body = request.body ?? {};
+    return quickCommands.update({
+      id: request.params.id,
+      account,
+      canManageShared: canManageShared(account),
+      name: body.name,
+      description: body.description,
+      instruction: body.instruction
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/chat/commands/:id", async (request, reply) => {
+    const account = requireChatAccount(request);
+    await quickCommands.delete({ id: request.params.id, account, canManageShared: canManageShared(account) });
+    return reply.status(204).send();
+  });
 
   /**
    * Starts loading a model into memory as soon as it is picked, so that the wait has already
@@ -169,10 +213,12 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
    * Without `conversationId` a new conversation starts, titled from the message.
    * Closing the request (the stop button) stops the model; what was written so far is kept.
    */
-  app.post<{ Body: { conversationId?: string; model?: string; content?: string } }>("/api/chat/messages", async (request, reply) => {
+  app.post<{ Body: { conversationId?: string; model?: string; content?: string; commandId?: string } }>("/api/chat/messages", async (request, reply) => {
     const account = requireChatAccount(request);
     const content = String(request.body?.content ?? "").trim();
     const model = String(request.body?.model ?? "").trim();
+    // Resolved before anything is saved: an unusable command must not leave half a turn behind.
+    const command = request.body?.commandId ? await quickCommands.findUsable(account, String(request.body.commandId)) : undefined;
 
     if (!content || content.length > MAX_MESSAGE_LENGTH) {
       throw new ModelDockError({ code: "CHAT_MESSAGE_INVALID", module: "chat", message: "The message is empty or too long.", httpStatus: 400 });
@@ -194,11 +240,24 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
     }
 
     const history = (await chats.listMessages(conversation.id)).filter((message) => message.content.length > 0).slice(-HISTORY_LIMIT);
-    const userMessage: ChatMessage = { id: `msg_${randomUUID()}`, conversationId: conversation.id, role: "user", content, status: "complete", createdAt: now };
+    const userMessage: ChatMessage = {
+      id: `msg_${randomUUID()}`,
+      conversationId: conversation.id,
+      role: "user",
+      content,
+      status: "complete",
+      createdAt: now,
+      ...(command ? { command: command.name } : {})
+    };
     await chats.insertMessage(userMessage);
     await chats.updateConversation(conversation.id, { model, updatedAt: now });
 
-    const turns: ChatTurn[] = [...history.map((message) => ({ role: message.role, content: message.content })), { role: "user", content }];
+    // A command's instruction goes with this message only, as a system turn right before it.
+    const turns: ChatTurn[] = [
+      ...history.map((message) => ({ role: message.role, content: message.content })),
+      ...(command ? [{ role: "system" as const, content: command.instruction }] : []),
+      { role: "user", content }
+    ];
 
     // From here the reply is a stream: errors travel inside it, not as an HTTP status.
     reply.hijack();

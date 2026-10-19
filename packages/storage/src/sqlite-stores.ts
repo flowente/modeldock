@@ -21,6 +21,8 @@ import type {
   ModelAccessGrant,
   ModelAccessPolicy,
   ModelAccessStore,
+  QuickCommand,
+  QuickCommandStore,
   Role,
   StoredAccount,
   StoredApiKey,
@@ -521,15 +523,16 @@ export class SqliteChatStore implements ChatStore {
       content: text(row.content),
       ...(row.model ? { model: text(row.model) } : {}),
       status: text(row.status) as ChatMessage["status"],
-      createdAt: text(row.created_at)
+      createdAt: text(row.created_at),
+      ...(row.command ? { command: text(row.command) } : {})
     }));
   }
 
   public async insertMessage(message: ChatMessage): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO messages (id, conversation_id, seq, role, content, model, status, created_at)
-         VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE conversation_id = ?), ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, conversation_id, seq, role, content, model, status, created_at, command)
+         VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE conversation_id = ?), ?, ?, ?, ?, ?, ?)`
       )
       .run(
         message.id,
@@ -539,7 +542,8 @@ export class SqliteChatStore implements ChatStore {
         message.content,
         nullable(message.model),
         message.status,
-        message.createdAt
+        message.createdAt,
+        nullable(message.command)
       );
   }
 }
@@ -689,6 +693,52 @@ function toConversation(row: Row): Conversation {
     userId: text(row.user_id),
     title: text(row.title),
     ...(row.model ? { model: text(row.model) } : {}),
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at)
+  };
+}
+
+export class SqliteQuickCommandStore implements QuickCommandStore {
+  private readonly db: Database;
+
+  public constructor(db: Database) {
+    this.db = db;
+  }
+
+  public async listVisible(accountId: string): Promise<QuickCommand[]> {
+    const rows = this.db.prepare("SELECT * FROM quick_commands WHERE owner_id IS NULL OR owner_id = ? ORDER BY name, owner_id").all(accountId) as Row[];
+    return rows.map(toQuickCommand);
+  }
+
+  public async findById(id: string): Promise<QuickCommand | undefined> {
+    const row = this.db.prepare("SELECT * FROM quick_commands WHERE id = ?").get(id) as Row | undefined;
+    return row ? toQuickCommand(row) : undefined;
+  }
+
+  public async insert(command: QuickCommand): Promise<void> {
+    this.db
+      .prepare("INSERT INTO quick_commands (id, owner_id, name, description, instruction, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(command.id, nullable(command.ownerId), command.name, command.description, command.instruction, command.createdAt, command.updatedAt);
+  }
+
+  public async update(id: string, patch: { name: string; description: string; instruction: string; updatedAt: string }): Promise<void> {
+    this.db
+      .prepare("UPDATE quick_commands SET name = ?, description = ?, instruction = ?, updated_at = ? WHERE id = ?")
+      .run(patch.name, patch.description, patch.instruction, patch.updatedAt, id);
+  }
+
+  public async delete(id: string): Promise<void> {
+    this.db.prepare("DELETE FROM quick_commands WHERE id = ?").run(id);
+  }
+}
+
+function toQuickCommand(row: Row): QuickCommand {
+  return {
+    id: text(row.id),
+    ...(row.owner_id ? { ownerId: text(row.owner_id) } : {}),
+    name: text(row.name),
+    description: text(row.description),
+    instruction: text(row.instruction),
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
   };

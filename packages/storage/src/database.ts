@@ -136,6 +136,41 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   CREATE INDEX api_usage_key_time ON api_usage(key_id, created_at);
+  `,
+  `
+  CREATE TABLE quick_commands (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    instruction TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX quick_commands_shared_name ON quick_commands(name) WHERE owner_id IS NULL;
+  CREATE UNIQUE INDEX quick_commands_own_name ON quick_commands(owner_id, name) WHERE owner_id IS NOT NULL;
+
+  ALTER TABLE messages ADD COLUMN command TEXT;
+
+  INSERT INTO quick_commands (id, owner_id, name, description, instruction, created_at, updated_at) VALUES
+    ('qc_riassumi', NULL, 'riassumi', 'Riassume in poche righe e punti chiave',
+     'Riassumi il testo che segue. Prima una frase che dice di cosa parla, poi i punti principali in un elenco. Non aggiungere informazioni che nel testo non ci sono.',
+     '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z'),
+    ('qc_correggi', NULL, 'correggi', 'Corregge ortografia e grammatica, senza cambiare lo stile',
+     'Correggi errori di ortografia, grammatica e punteggiatura nel testo che segue, senza cambiarne stile e significato. Rispondi con il testo corretto e poi, in breve, l''elenco delle correzioni fatte.',
+     '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z'),
+    ('qc_inglese', NULL, 'inglese', 'Traduce in inglese',
+     'Traduci in inglese il testo che segue, mantenendo tono e formattazione. Rispondi solo con la traduzione.',
+     '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z'),
+    ('qc_italiano', NULL, 'italiano', 'Traduce in italiano',
+     'Traduci in italiano il testo che segue, mantenendo tono e formattazione. Rispondi solo con la traduzione.',
+     '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z'),
+    ('qc_email', NULL, 'email', 'Trasforma appunti in una email professionale',
+     'Riscrivi quello che segue come una email professionale in italiano: oggetto, saluto, testo chiaro e breve, chiusura. Non inventare nomi, date o dati che non ci sono: dove mancano, lascia uno spazio tra parentesi quadre.',
+     '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z'),
+    ('qc_spiega', NULL, 'spiega', 'Spiega in modo semplice, con un esempio',
+     'Spiega quello che segue in modo semplice, come a una persona intelligente ma non esperta della materia. Usa un esempio concreto e niente gergo non spiegato.',
+     '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z');
   `
 ];
 

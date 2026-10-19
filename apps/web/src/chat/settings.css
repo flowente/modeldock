@@ -917,3 +917,67 @@
   flex-direction: row;
   gap: 2px;
 }
+
+/* ---------- Quick commands ---------- */
+
+.md-command-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-command-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--md-line);
+}
+
+.md-command-list li:first-child {
+  border-top: 0;
+}
+
+.md-command-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.md-command-text details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-command-text details p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-size: 14px;
+  color: var(--md-text-2);
+}
+
+.md-command-actions {
+  display: flex;
+  flex-shrink: 0;
+}
+
+/* Matches the inputs beside it. */
+.md-field .md-textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  border: 1px solid var(--md-line);
+  border-radius: 10px;
+  background: var(--md-panel);
+  color: var(--md-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
+  resize: vertical;
+}

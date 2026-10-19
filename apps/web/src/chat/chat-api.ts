@@ -115,6 +115,16 @@ export interface ApiKeyUsage {
   recent: ApiUsageEntry[];
 }
 
+/** A "/name" command as the account sees it. */
+export interface QuickCommand {
+  id: string;
+  name: string;
+  description: string;
+  instruction: string;
+  shared: boolean;
+  editable: boolean;
+}
+
 export interface AuthState {
   setupRequired: boolean;
   requireLogin: boolean;
@@ -178,6 +188,11 @@ export const api = {
     request<{ account: Account }>(`/api/auth/invitations/${encodeURIComponent(token)}/accept`, json({ password })),
 
   models: () => request<ChatModel[]>("/api/chat/models"),
+  commands: () => request<QuickCommand[]>("/api/chat/commands"),
+  createCommand: (body: { name: string; description: string; instruction: string; shared: boolean }) => request<QuickCommand>("/api/chat/commands", json(body)),
+  updateCommand: (id: string, body: { name: string; description: string; instruction: string }) =>
+    request<QuickCommand>(`/api/chat/commands/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteCommand: (id: string) => request<void>(`/api/chat/commands/${encodeURIComponent(id)}`, { method: "DELETE" }),
   warmModel: (name: string) => request<{ state: string }>(`/api/chat/models/${encodeURIComponent(name)}/warm`, { method: "POST" }),
   conversations: (query?: string) =>
     request<Conversation[]>(`/api/chat/conversations${query?.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`),
@@ -255,7 +270,7 @@ export const api = {
  * Aborting `signal` is the stop button: the server keeps what was written so far.
  */
 export async function streamMessage(
-  body: { conversationId?: string; model: string; content: string },
+  body: { conversationId?: string; model: string; content: string; commandId?: string },
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal
 ): Promise<void> {

@@ -41,3 +41,4 @@ export function can(role: Role, permission: Permission): boolean {
 export * from "./model-access.ts";
 export * from "./accounts.ts";
 export * from "./api-keys.ts";
+export * from "./quick-commands.ts";

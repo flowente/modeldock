@@ -1135,3 +1135,47 @@
   flex-grow: 0;
   margin-right: 0;
 }
+
+/* ---------- Quick commands ---------- */
+
+.md-menu-slash {
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: min(340px, 50vh);
+  overflow-y: auto;
+}
+
+.md-menu-slash .md-menu-item[data-highlighted="true"] {
+  background: var(--md-hover);
+}
+
+.md-slash-name {
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.md-menu-plus {
+  bottom: calc(100% + 8px);
+  left: -6px;
+  width: 220px;
+}
+
+.md-plus {
+  width: 34px;
+  height: 34px;
+  margin-left: -8px;
+}
+
+.md-command-chip {
+  display: block;
+  width: fit-content;
+  margin-bottom: 6px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--md-accent-soft);
+  color: var(--md-accent);
+  font-family: var(--md-mono);
+  font-size: 12px;
+}
