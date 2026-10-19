@@ -125,6 +125,33 @@ export interface QuickCommand {
   editable: boolean;
 }
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description: string;
+  model?: string;
+  owner: { id: string; displayName: string };
+  shared: boolean;
+  editable: boolean;
+  /** Characters of instructions and references: what every reply has to read. */
+  contextChars: number;
+}
+
+export interface ProjectView extends ProjectSummary {
+  instructions: string;
+  reference: string;
+  access: Array<{ type: "user" | "group"; id: string }>;
+}
+
+export interface ProjectInput {
+  name: string;
+  description: string;
+  instructions: string;
+  reference: string;
+  model: string;
+  access?: Array<{ type: "user" | "group"; id: string }>;
+}
+
 export interface AuthState {
   setupRequired: boolean;
   requireLogin: boolean;
@@ -140,6 +167,8 @@ export interface ChatModel {
   state?: "ready" | "loading" | "idle";
   /** How long it took to load last time, when known. */
   lastLoadMs?: number;
+  /** Tokens it can read at once, when it is in memory. */
+  contextLength?: number;
 }
 
 export type StreamEvent =
@@ -147,6 +176,7 @@ export type StreamEvent =
   | { type: "message"; message: ChatMessage }
   | { type: "delta"; content: string }
   | { type: "status"; status: "loading" | "thinking"; expectedMs?: number }
+  | { type: "notice"; code: "CONTEXT_FULL"; promptTokens: number; contextLength: number }
   | { type: "done"; message: ChatMessage }
   | { type: "error"; error: { code: string; message: string }; message?: ChatMessage };
 
@@ -194,8 +224,20 @@ export const api = {
     request<QuickCommand>(`/api/chat/commands/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteCommand: (id: string) => request<void>(`/api/chat/commands/${encodeURIComponent(id)}`, { method: "DELETE" }),
   warmModel: (name: string) => request<{ state: string }>(`/api/chat/models/${encodeURIComponent(name)}/warm`, { method: "POST" }),
-  conversations: (query?: string) =>
-    request<Conversation[]>(`/api/chat/conversations${query?.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`),
+  conversations: (query?: string, projectId?: string | null) => {
+    const params = new URLSearchParams();
+    if (query?.trim()) params.set("q", query.trim());
+    if (projectId) params.set("projectId", projectId);
+    const search = params.toString();
+    return request<Conversation[]>(`/api/chat/conversations${search ? `?${search}` : ""}`);
+  },
+  projects: () => request<ProjectSummary[]>("/api/chat/projects"),
+  projectsToManage: () => request<ProjectSummary[]>("/api/chat/projects/manage"),
+  project: (id: string) => request<ProjectView>(`/api/chat/projects/${encodeURIComponent(id)}`),
+  createProject: (body: ProjectInput) => request<ProjectView>("/api/chat/projects", json(body)),
+  updateProject: (id: string, body: ProjectInput) =>
+    request<ProjectView>(`/api/chat/projects/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteProject: (id: string) => request<void>(`/api/chat/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
   conversation: (id: string) => request<{ conversation: Conversation; messages: ChatMessage[] }>(`/api/chat/conversations/${encodeURIComponent(id)}`),
   rename: (id: string, title: string) =>
     request<Conversation>(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
@@ -270,7 +312,7 @@ export const api = {
  * Aborting `signal` is the stop button: the server keeps what was written so far.
  */
 export async function streamMessage(
-  body: { conversationId?: string; model: string; content: string; commandId?: string },
+  body: { conversationId?: string; model: string; content: string; commandId?: string; projectId?: string },
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal
 ): Promise<void> {

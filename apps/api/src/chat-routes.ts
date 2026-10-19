@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { can, type QuickCommandService } from "@modeldock/auth";
-import type { Account, ChatMessage, ChatStore, ChatTurn, Clock, Conversation, ModelAccessStore, OllamaGateway } from "@modeldock/core";
+import { can, type ProjectService, type QuickCommandService } from "@modeldock/auth";
+import type { Account, ChatMessage, ChatStore, ChatTurn, Clock, Conversation, ModelAccessStore, OllamaGateway, Project } from "@modeldock/core";
 import { canUseModel, ModelDockError } from "@modeldock/core";
 
 /** How many earlier messages go back to the model. Older ones are left out to fit its context. */
@@ -14,6 +14,7 @@ export interface ChatRoutesOptions {
   ollama: OllamaGateway;
   modelAccess: ModelAccessStore;
   quickCommands: QuickCommandService;
+  projects: ProjectService;
   clock: Clock;
 }
 
@@ -27,11 +28,13 @@ export type ChatStreamEvent =
    * last time, when known), or reasoning before it answers. A delta ends the status.
    */
   | { type: "status"; status: "loading" | "thinking"; expectedMs?: number }
+  /** The model read as many tokens as it can hold: the start of what it was given was cut. */
+  | { type: "notice"; code: "CONTEXT_FULL"; promptTokens: number; contextLength: number }
   | { type: "done"; message: ChatMessage }
   | { type: "error"; error: { code: string; message: string }; message?: ChatMessage };
 
 export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOptions): void {
-  const { chats, ollama, modelAccess, quickCommands, clock } = options;
+  const { chats, ollama, modelAccess, quickCommands, projects, clock } = options;
   // What a model can do never changes for a given name and tag: ask Ollama once.
   const capabilities = new Map<string, Promise<string[]>>();
 
@@ -58,7 +61,12 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
   };
 
   async function loadedModels(): Promise<Set<string>> {
-    return new Set((await ollama.listRunningModels().catch(() => [])).map((model) => model.name));
+    return new Set((await runningModels()).keys());
+  }
+
+  /** Models in memory, with the context each was loaded with. */
+  async function runningModels(): Promise<Map<string, number | undefined>> {
+    return new Map((await ollama.listRunningModels().catch(() => [])).map((model) => [model.name, model.contextLength]));
   }
 
   async function canChat(name: string): Promise<boolean> {
@@ -71,7 +79,8 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
   async function allowedModels(account: Account) {
     const installed = await ollama.listLocalModels();
     const user = { userId: account.id, role: account.role, groupIds: account.groupIds };
-    const loaded = await loadedModels();
+    const running = await runningModels();
+    const loaded = new Set(running.keys());
     const result = [];
     for (const model of installed) {
       if (!(await canChat(model.name))) continue;
@@ -83,7 +92,8 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
           sizeBytes: model.sizeBytes,
           capabilities: await capabilitiesOf(model.name),
           state: loaded.has(model.name) ? "ready" : warming.has(model.name) ? "loading" : "idle",
-          ...(loadTimes.has(model.name) ? { lastLoadMs: loadTimes.get(model.name) } : {})
+          ...(loadTimes.has(model.name) ? { lastLoadMs: loadTimes.get(model.name) } : {}),
+          ...(running.get(model.name) ? { contextLength: running.get(model.name) } : {})
         });
       }
     }
@@ -100,6 +110,44 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
   }
 
   app.get("/api/chat/models", async (request) => allowedModels(requireChatAccount(request)));
+
+  // ---- Projects: instructions and references for whole conversations ----
+
+  type ProjectBody = { name?: unknown; description?: unknown; instructions?: unknown; reference?: unknown; model?: unknown; access?: unknown };
+
+  app.get("/api/chat/projects", async (request) => projects.listUsable(requireChatAccount(request)));
+  app.get("/api/chat/projects/manage", async (request) => projects.listForSettings(requireChatAccount(request)));
+  app.get<{ Params: { id: string } }>("/api/chat/projects/:id", async (request) => projects.get(requireChatAccount(request), request.params.id));
+
+  app.post<{ Body: ProjectBody }>("/api/chat/projects", async (request, reply) => {
+    const body = request.body ?? {};
+    const created = await projects.create(requireChatAccount(request), {
+      name: body.name,
+      description: body.description,
+      instructions: body.instructions,
+      reference: body.reference,
+      model: body.model,
+      ...(body.access !== undefined ? { access: body.access } : {})
+    });
+    return reply.status(201).send(created);
+  });
+
+  app.put<{ Params: { id: string }; Body: ProjectBody }>("/api/chat/projects/:id", async (request) => {
+    const body = request.body ?? {};
+    return projects.update(requireChatAccount(request), request.params.id, {
+      name: body.name,
+      description: body.description,
+      instructions: body.instructions,
+      reference: body.reference,
+      model: body.model,
+      ...(body.access !== undefined ? { access: body.access } : {})
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/chat/projects/:id", async (request, reply) => {
+    await projects.delete(requireChatAccount(request), request.params.id);
+    return reply.status(204).send();
+  });
 
   // ---- Quick commands: "/name" in the chat ----
 
@@ -179,9 +227,9 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
     return Object.fromEntries(entries.map(([name, chat]) => [name, { chat }]));
   });
 
-  app.get<{ Querystring: { q?: string } }>("/api/chat/conversations", async (request) => {
+  app.get<{ Querystring: { q?: string; projectId?: string } }>("/api/chat/conversations", async (request) => {
     const account = requireChatAccount(request);
-    return chats.listConversations(account.id, request.query.q);
+    return chats.listConversations(account.id, request.query.q, request.query.projectId || undefined);
   });
 
   app.get<{ Params: { id: string } }>("/api/chat/conversations/:id", async (request) => {
@@ -213,7 +261,7 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
    * Without `conversationId` a new conversation starts, titled from the message.
    * Closing the request (the stop button) stops the model; what was written so far is kept.
    */
-  app.post<{ Body: { conversationId?: string; model?: string; content?: string; commandId?: string } }>("/api/chat/messages", async (request, reply) => {
+  app.post<{ Body: { conversationId?: string; model?: string; content?: string; commandId?: string; projectId?: string } }>("/api/chat/messages", async (request, reply) => {
     const account = requireChatAccount(request);
     const content = String(request.body?.content ?? "").trim();
     const model = String(request.body?.model ?? "").trim();
@@ -231,10 +279,22 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
     const now = clock.now().toISOString();
     let conversation: Conversation;
     let isNew = false;
+    let project: Project | undefined;
     if (request.body?.conversationId) {
       conversation = await ownConversation(account, request.body.conversationId);
+      // A project taken away from the account no longer feeds its conversations.
+      if (conversation.projectId) project = await projects.findUsable(account, conversation.projectId);
     } else {
-      conversation = { id: `cnv_${randomUUID()}`, userId: account.id, title: cleanTitle(content), model, createdAt: now, updatedAt: now };
+      project = request.body?.projectId ? await projects.findUsable(account, String(request.body.projectId)) : undefined;
+      conversation = {
+        id: `cnv_${randomUUID()}`,
+        userId: account.id,
+        title: cleanTitle(content),
+        model,
+        ...(project ? { projectId: project.id } : {}),
+        createdAt: now,
+        updatedAt: now
+      };
       await chats.insertConversation(conversation);
       isNew = true;
     }
@@ -253,7 +313,10 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
     await chats.updateConversation(conversation.id, { model, updatedAt: now });
 
     // A command's instruction goes with this message only, as a system turn right before it.
+    const context = project ? projectContext(project) : "";
     const turns: ChatTurn[] = [
+      // The project's instructions and references open every request of the conversation.
+      ...(context ? [{ role: "system" as const, content: context }] : []),
       ...history.map((message) => ({ role: message.role, content: message.content })),
       ...(command ? [{ role: "system" as const, content: command.instruction }] : []),
       { role: "user", content }
@@ -286,6 +349,7 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
 
     let answer = "";
     let saidThinking = false;
+    let promptTokens: number | undefined;
     let failure: { code: string; message: string } | undefined;
     try {
       for await (const chunk of ollama.chat({ model, messages: turns, signal: stop.signal })) {
@@ -300,6 +364,7 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
         }
         if (chunk.done) {
           rememberLoad(model, chunk.loadMs);
+          promptTokens = chunk.promptTokens;
           break;
         }
       }
@@ -336,6 +401,13 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
       return;
     }
 
+    // Ollama cuts silently, from the start, what does not fit: that is where the project's
+    // instructions are. Say so when the model read right up to its limit.
+    if (promptTokens && !failure && !stop.signal.aborted) {
+      const contextLength = (await runningModels()).get(model);
+      if (contextLength && promptTokens >= contextLength * 0.97) send({ type: "notice", code: "CONTEXT_FULL", promptTokens, contextLength });
+    }
+
     if (stop.signal.aborted) {
       // The other side is gone: ending politely would leave the socket open, so drop it.
       raw.destroy();
@@ -344,6 +416,13 @@ export function registerChatRoutes(app: FastifyInstance, options: ChatRoutesOpti
     send(failure ? { type: "error", error: failure, message: assistantMessage } : { type: "done", message: assistantMessage });
     if (!raw.writableEnded) raw.end();
   });
+}
+
+/** What the model reads before the conversation: the project's instructions, then its references. */
+function projectContext(project: Project): string {
+  const parts = [project.instructions.trim()];
+  if (project.reference.trim()) parts.push(`## Materiale di riferimento del progetto «${project.name}»\n\n${project.reference.trim()}`);
+  return parts.filter(Boolean).join("\n\n");
 }
 
 function requireChatAccount(request: FastifyRequest): Account {

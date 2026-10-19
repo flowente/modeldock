@@ -171,6 +171,29 @@ const MIGRATIONS: string[] = [
     ('qc_spiega', NULL, 'spiega', 'Spiega in modo semplice, con un esempio',
      'Spiega quello che segue in modo semplice, come a una persona intelligente ma non esperta della materia. Usa un esempio concreto e niente gergo non spiegato.',
      '2026-10-19T00:00:00.000Z', '2026-10-19T00:00:00.000Z');
+  `,
+  `
+  CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    model TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE project_access (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    subject_type TEXT NOT NULL CHECK (subject_type IN ('user', 'group')),
+    subject_id TEXT NOT NULL,
+    PRIMARY KEY (project_id, subject_type, subject_id)
+  );
+
+  ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+  CREATE INDEX conversations_project ON conversations(project_id);
   `
 ];
 

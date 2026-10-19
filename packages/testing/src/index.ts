@@ -130,7 +130,7 @@ export class FakeOllamaGateway implements OllamaGateway {
   public async listRunningModels(): Promise<RunningModel[]> {
     return [...this.models.values()]
       .filter((model) => model.running)
-      .map((model) => ({ name: model.name, sizeBytes: model.sizeBytes, expiresAt: "2026-08-29T00:05:00.000Z" }));
+      .map((model) => ({ name: model.name, sizeBytes: model.sizeBytes, expiresAt: "2026-08-29T00:05:00.000Z", contextLength: this.contextLength }));
   }
 
   public async loadModel(input: ModelRuntimeInput): Promise<void> {
@@ -206,6 +206,8 @@ export class FakeOllamaGateway implements OllamaGateway {
 
   /** The last conversation sent to the model, for tests to inspect what it received. */
   public lastChatInput: ChatInput | undefined;
+  /** Tokens a loaded model holds. Prompts longer than this are cut, as Ollama does. */
+  public contextLength = 4096;
 
   public async *chat(input: ChatInput): AsyncIterable<ChatChunk> {
     this.lastChatInput = input;
@@ -235,7 +237,9 @@ export class FakeOllamaGateway implements OllamaGateway {
       yield { content: index === 0 ? word : ` ${word}`, done: false };
     }
 
-    yield { content: "", done: true, ...(wasLoaded ? {} : { loadMs: this.loadMs }) };
+    // About four characters a token, never more than the context holds.
+    const promptTokens = Math.min(this.contextLength, Math.ceil(input.messages.reduce((sum, message) => sum + message.content.length, 0) / 4));
+    yield { content: "", done: true, promptTokens, ...(wasLoaded ? {} : { loadMs: this.loadMs }) };
   }
 
   /** The last request forwarded to the OpenAI-compatible endpoints, for tests to inspect. */

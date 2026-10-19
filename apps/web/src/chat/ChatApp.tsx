@@ -109,6 +109,9 @@ export function explain(error: unknown): string {
     QUICK_COMMAND_INSTRUCTION_INVALID: "Scrivi le istruzioni (al massimo 20.000 caratteri).",
     QUICK_COMMAND_DESCRIPTION_INVALID: "La descrizione è al massimo di 120 caratteri.",
     QUICK_COMMAND_NOT_FOUND: "Questa skill non esiste più.",
+    PROJECT_NOT_FOUND: "Questo progetto non esiste più, o non è più condiviso con te.",
+    PROJECT_FIELD_INVALID: "Controlla i campi del progetto: il nome è obbligatorio e ogni testo ha un limite di lunghezza.",
+    PROJECT_ACCESS_INVALID: "Una delle persone o dei gruppi scelti non esiste più.",
     INVALID_INPUT: "Manca un dato obbligatorio."
   };
   return messages[error.code] ?? "Qualcosa non ha funzionato. Riprova.";

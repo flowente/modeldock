@@ -27,4 +27,4 @@ export class InMemoryAuditStore implements AuditStore {
 }
 
 export { openDatabase, SCHEMA_VERSION, transaction, type Database } from "./database.ts";
-export { SqliteAccountStore, SqliteApiKeyStore, SqliteApiUsageStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore, SqliteQuickCommandStore } from "./sqlite-stores.ts";
+export { SqliteAccountStore, SqliteApiKeyStore, SqliteApiUsageStore, SqliteAuditStore, SqliteChatStore, SqliteModelAccessStore, SqliteProjectStore, SqliteQuickCommandStore } from "./sqlite-stores.ts";

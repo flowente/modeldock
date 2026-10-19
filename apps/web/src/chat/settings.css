@@ -1013,3 +1013,60 @@
 .md-skill-warning {
   color: var(--md-danger);
 }
+
+/* ---------- Projects ---------- */
+
+.md-project-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.md-small {
+  font-size: 12px;
+}
+
+.md-small-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.md-context-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.md-context-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--md-line);
+  overflow: hidden;
+}
+
+.md-context-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--md-accent);
+}
+
+.md-context-meter[data-level="high"] .md-context-bar span {
+  background: #d39b00;
+}
+
+.md-context-meter[data-level="over"] .md-context-bar span,
+.md-context-meter[data-level="over"] small {
+  color: var(--md-danger);
+  background: var(--md-danger);
+}
+
+.md-context-meter[data-level="over"] small {
+  background: none;
+}

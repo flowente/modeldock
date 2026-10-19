@@ -319,6 +319,8 @@ export interface ChatChunk {
   thinking?: boolean;
   /** On the last chunk: how long loading the model into memory took, when it had to. */
   loadMs?: number;
+  /** On the last chunk: how many tokens the model actually read. At the context limit, some were cut. */
+  promptTokens?: number;
 }
 
 export type ChatMessageStatus = "complete" | "stopped" | "error";
@@ -328,8 +330,42 @@ export interface Conversation {
   userId: string;
   title: string;
   model?: string;
+  /** The project the conversation belongs to: its instructions and references go with every reply. */
+  projectId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * A project: instructions and reference texts that hold for a whole conversation, shared with
+ * the people and groups given access. The context is shared; the conversations stay personal.
+ */
+export interface Project {
+  id: string;
+  ownerId: string;
+  name: string;
+  description: string;
+  /** Markdown: how to behave in every conversation of the project. */
+  instructions: string;
+  /** Markdown: notes, price lists, glossaries the model always reads. */
+  reference: string;
+  /** Suggested model, picked for new conversations when the account may use it. */
+  model?: string;
+  access: AccessSubject[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectStore {
+  list(): Promise<Project[]>;
+  findById(id: string): Promise<Project | undefined>;
+  insert(project: Project): Promise<void>;
+  update(
+    id: string,
+    patch: { name: string; description: string; instructions: string; reference: string; model?: string; updatedAt: string }
+  ): Promise<void>;
+  setAccess(id: string, access: AccessSubject[]): Promise<void>;
+  delete(id: string): Promise<void>;
 }
 
 export interface ChatMessage {
@@ -369,7 +405,7 @@ export interface QuickCommandStore {
 
 export interface ChatStore {
   /** Most recent first. `query` matches titles and message text. */
-  listConversations(userId: string, query?: string): Promise<Conversation[]>;
+  listConversations(userId: string, query?: string, projectId?: string): Promise<Conversation[]>;
   findConversation(id: string): Promise<Conversation | undefined>;
   insertConversation(conversation: Conversation): Promise<void>;
   updateConversation(id: string, patch: { title?: string; model?: string; updatedAt: string }): Promise<void>;
@@ -382,6 +418,8 @@ export interface RunningModel {
   name: string;
   sizeBytes?: number;
   expiresAt?: string;
+  /** Tokens the model was loaded with: everything it reads at once must fit in here. */
+  contextLength?: number;
 }
 
 export interface ModelPullProgress {

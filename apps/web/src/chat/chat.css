@@ -1180,3 +1180,80 @@
   font-family: var(--md-mono);
   font-size: 12px;
 }
+
+/* ---------- Projects in the chat ---------- */
+
+.md-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.md-project-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--md-text-2);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.md-project-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-project-item:hover {
+  background: var(--md-hover);
+  color: var(--md-text);
+}
+
+.md-project-item[aria-pressed="true"] {
+  background: var(--md-hover);
+  color: var(--md-text);
+  font-weight: 500;
+}
+
+.md-project-new {
+  color: var(--md-muted);
+}
+
+.md-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 10px;
+  border: 1px solid var(--md-line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--md-text-2);
+}
+
+.md-project-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-welcome-project {
+  margin: -16px 0 0;
+  font-size: 14px;
+  color: var(--md-muted);
+  text-align: center;
+}
+
+.md-history-project {
+  display: block;
+  font-size: 11px;
+  color: var(--md-muted);
+}

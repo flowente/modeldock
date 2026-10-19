@@ -27,6 +27,7 @@ interface OllamaPsResponse {
     name?: string;
     size?: number;
     expires_at?: string;
+    context_length?: number;
   }>;
 }
 
@@ -109,7 +110,8 @@ export class OllamaHttpGateway implements OllamaGateway {
     return (body.models ?? []).map((model) => ({
       name: model.name ?? "unknown",
       sizeBytes: model.size,
-      expiresAt: model.expires_at
+      expiresAt: model.expires_at,
+      ...(model.context_length ? { contextLength: model.context_length } : {})
     }));
   }
 
@@ -379,6 +381,7 @@ function parseChatLine(line: string): ChatChunk | undefined {
     done?: boolean;
     error?: string;
     load_duration?: number;
+    prompt_eval_count?: number;
   };
 
   if (body.error) {
@@ -389,6 +392,7 @@ function parseChatLine(line: string): ChatChunk | undefined {
     content: body.message?.content ?? "",
     done: body.done === true,
     ...(body.message?.thinking ? { thinking: true } : {}),
-    ...(body.done && body.load_duration ? { loadMs: Math.round(body.load_duration / 1e6) } : {})
+    ...(body.done && body.load_duration ? { loadMs: Math.round(body.load_duration / 1e6) } : {}),
+    ...(body.done && body.prompt_eval_count ? { promptTokens: body.prompt_eval_count } : {})
   };
 }

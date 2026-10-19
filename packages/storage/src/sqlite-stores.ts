@@ -1,5 +1,6 @@
 import type {
   AccessGroup,
+  AccessSubject,
   AccessUser,
   AccountPatch,
   AccountStore,
@@ -21,6 +22,8 @@ import type {
   ModelAccessGrant,
   ModelAccessPolicy,
   ModelAccessStore,
+  Project,
+  ProjectStore,
   QuickCommand,
   QuickCommandStore,
   Role,
@@ -471,22 +474,27 @@ export class SqliteChatStore implements ChatStore {
     this.db = db;
   }
 
-  public async listConversations(userId: string, query?: string): Promise<Conversation[]> {
+  public async listConversations(userId: string, query?: string, projectId?: string): Promise<Conversation[]> {
     const term = query?.trim();
+    // Inside a project, only its conversations.
+    const inProject = projectId ? " AND c.project_id = ?" : "";
+    const projectArgs = projectId ? [projectId] : [];
     if (!term) {
-      const rows = this.db.prepare("SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC").all(userId) as Row[];
+      const rows = this.db
+        .prepare(`SELECT * FROM conversations c WHERE c.user_id = ?${inProject} ORDER BY c.updated_at DESC, c.rowid DESC`)
+        .all(userId, ...projectArgs) as Row[];
       return rows.map(toConversation);
     }
     // LIKE wildcards typed by the user are taken literally.
     const pattern = `%${term.replace(/[!%_]/g, (character) => `!${character}`)}%`;
     const rows = this.db
       .prepare(
-        `SELECT * FROM conversations c WHERE c.user_id = ? AND (
+        `SELECT * FROM conversations c WHERE c.user_id = ?${inProject} AND (
            c.title LIKE ? ESCAPE '!'
            OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ? ESCAPE '!')
          ) ORDER BY c.updated_at DESC, c.rowid DESC`
       )
-      .all(userId, pattern, pattern) as Row[];
+      .all(userId, ...projectArgs, pattern, pattern) as Row[];
     return rows.map(toConversation);
   }
 
@@ -497,8 +505,16 @@ export class SqliteChatStore implements ChatStore {
 
   public async insertConversation(conversation: Conversation): Promise<void> {
     this.db
-      .prepare("INSERT INTO conversations (id, user_id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(conversation.id, conversation.userId, conversation.title, nullable(conversation.model), conversation.createdAt, conversation.updatedAt);
+      .prepare("INSERT INTO conversations (id, user_id, title, model, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(
+        conversation.id,
+        conversation.userId,
+        conversation.title,
+        nullable(conversation.model),
+        nullable(conversation.projectId),
+        conversation.createdAt,
+        conversation.updatedAt
+      );
   }
 
   public async updateConversation(id: string, patch: { title?: string; model?: string; updatedAt: string }): Promise<void> {
@@ -693,6 +709,7 @@ function toConversation(row: Row): Conversation {
     userId: text(row.user_id),
     title: text(row.title),
     ...(row.model ? { model: text(row.model) } : {}),
+    ...(row.project_id ? { projectId: text(row.project_id) } : {}),
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
   };
@@ -739,6 +756,100 @@ function toQuickCommand(row: Row): QuickCommand {
     name: text(row.name),
     description: text(row.description),
     instruction: text(row.instruction),
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at)
+  };
+}
+
+export class SqliteProjectStore implements ProjectStore {
+  private readonly db: Database;
+
+  public constructor(db: Database) {
+    this.db = db;
+  }
+
+  public async list(): Promise<Project[]> {
+    const rows = this.db.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE, rowid").all() as Row[];
+    const access = this.accessByProject();
+    return rows.map((row) => toProject(row, access.get(text(row.id)) ?? []));
+  }
+
+  public async findById(id: string): Promise<Project | undefined> {
+    const row = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as Row | undefined;
+    return row ? toProject(row, this.accessByProject(id).get(id) ?? []) : undefined;
+  }
+
+  public async insert(project: Project): Promise<void> {
+    transaction(this.db, () => {
+      this.db
+        .prepare(
+          `INSERT INTO projects (id, owner_id, name, description, instructions, reference, model, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          project.id,
+          project.ownerId,
+          project.name,
+          project.description,
+          project.instructions,
+          project.reference,
+          nullable(project.model),
+          project.createdAt,
+          project.updatedAt
+        );
+      this.replaceAccess(project.id, project.access);
+    });
+  }
+
+  public async update(
+    id: string,
+    patch: { name: string; description: string; instructions: string; reference: string; model?: string; updatedAt: string }
+  ): Promise<void> {
+    this.db
+      .prepare("UPDATE projects SET name = ?, description = ?, instructions = ?, reference = ?, model = ?, updated_at = ? WHERE id = ?")
+      .run(patch.name, patch.description, patch.instructions, patch.reference, nullable(patch.model), patch.updatedAt, id);
+  }
+
+  public async setAccess(id: string, access: AccessSubject[]): Promise<void> {
+    transaction(this.db, () => this.replaceAccess(id, access));
+  }
+
+  public async delete(id: string): Promise<void> {
+    this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  }
+
+  private replaceAccess(id: string, access: AccessSubject[]): void {
+    this.db.prepare("DELETE FROM project_access WHERE project_id = ?").run(id);
+    const insert = this.db.prepare("INSERT OR IGNORE INTO project_access (project_id, subject_type, subject_id) VALUES (?, ?, ?)");
+    for (const subject of access) insert.run(id, subject.type, subject.id);
+  }
+
+  private accessByProject(only?: string): Map<string, AccessSubject[]> {
+    const rows = (
+      only
+        ? this.db.prepare("SELECT * FROM project_access WHERE project_id = ? ORDER BY subject_type, subject_id").all(only)
+        : this.db.prepare("SELECT * FROM project_access ORDER BY subject_type, subject_id").all()
+    ) as Row[];
+    const result = new Map<string, AccessSubject[]>();
+    for (const row of rows) {
+      const list = result.get(text(row.project_id)) ?? [];
+      list.push({ type: text(row.subject_type) as AccessSubject["type"], id: text(row.subject_id) });
+      result.set(text(row.project_id), list);
+    }
+    return result;
+  }
+}
+
+function toProject(row: Row, access: AccessSubject[]): Project {
+  return {
+    id: text(row.id),
+    ownerId: text(row.owner_id),
+    name: text(row.name),
+    description: text(row.description),
+    instructions: text(row.instructions),
+    reference: text(row.reference),
+    ...(row.model ? { model: text(row.model) } : {}),
+    access,
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
   };

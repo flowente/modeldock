@@ -9,6 +9,7 @@ import {
   Menu,
   Moon,
   Pencil,
+  Folder,
   Plus,
   Search,
   Settings as SettingsIcon,
@@ -17,7 +18,7 @@ import {
   Trash2
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { api, streamMessage, type Account, type ChatMessage, type ChatModel, type Conversation, type QuickCommand, type StreamEvent } from "./chat-api.ts";
+import { api, streamMessage, type Account, type ChatMessage, type ChatModel, type Conversation, type ProjectSummary, type QuickCommand, type StreamEvent } from "./chat-api.ts";
 import { explain, Mark, navigate, type ThemePreference } from "./ChatApp.tsx";
 import { capabilityWords, SketchWords } from "./SketchWords.tsx";
 import { parseCommand, SlashMenu, useSlashMenu } from "./quick-commands.tsx";
@@ -31,6 +32,8 @@ const ROLE_LABELS: Record<Account["role"], string> = {
   viewer: "Visualizzatore",
   member: "Membro"
 };
+
+const PROJECT_KEY = "modeldock-project";
 
 const SUGGESTIONS = ["Riassumi un testo", "Scrivi un'email", "Spiegami un concetto", "Aiutami con del codice"];
 
@@ -68,13 +71,29 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const stopRef = useRef<AbortController | null>(null);
 
   const commands = useQuery({ queryKey: ["quick-commands"], queryFn: api.commands });
+  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
+  // The project new chats start in, and whose conversations the sidebar shows. Remembered.
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem(PROJECT_KEY);
+    } catch {
+      return null;
+    }
+  });
   const models = useQuery({
     queryKey: ["chat-models"],
     queryFn: api.models,
     // While a model loads, look more often so the dot turns green soon after it is ready.
     refetchInterval: (query) => (query.state.data?.some((candidate) => candidate.state === "loading") ? 2000 : 15_000)
   });
-  const conversations = useQuery({ queryKey: ["conversations", search], queryFn: () => api.conversations(search) });
+  const knownProjects = projects.data ?? [];
+  // A remembered project that is gone (deleted, or taken away) is simply not active.
+  const activeProject = knownProjects.find((project) => project.id === activeProjectId);
+  const conversations = useQuery({
+    queryKey: ["conversations", search, activeProject?.id ?? null],
+    queryFn: () => api.conversations(search, activeProject?.id ?? null),
+    enabled: !projects.isPending
+  });
   const detail = useQuery({
     queryKey: ["conversation", conversationId],
     queryFn: () => api.conversation(conversationId!),
@@ -95,6 +114,9 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const available = models.data ?? [];
   const model = pickModel(available, switchedTo ?? detail.data?.conversation.model, chosenModel);
   const currentModel = available.find((candidate) => candidate.name === model);
+  // An open conversation shows its own project; a new one, the active project.
+  const openProjectId = conversationId ? detail.data?.conversation.projectId : activeProject?.id;
+  const currentProject = knownProjects.find((project) => project.id === openProjectId);
   // A server from before this field sends none: the words fall back to the ones every model has.
   const capabilities = currentModel?.capabilities ?? [];
   const capabilityKey = capabilities.join(",");
@@ -108,6 +130,19 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
       .warmModel(target.name)
       .catch(() => undefined)
       .finally(() => void queryClient.invalidateQueries({ queryKey: ["chat-models"] }));
+  };
+
+  const chooseProject = (id: string | null) => {
+    setActiveProjectId(id);
+    try {
+      if (id) window.localStorage.setItem(PROJECT_KEY, id);
+      else window.localStorage.removeItem(PROJECT_KEY);
+    } catch {
+      // not remembered after a reload, nothing else changes
+    }
+    const suggested = knownProjects.find((project) => project.id === id)?.model;
+    if (suggested && available.some((candidate) => candidate.name === suggested)) chooseModel(suggested);
+    navigate("");
   };
 
   const chooseModel = (name: string) => {
@@ -147,6 +182,10 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       } else if (event.type === "message") {
         setPending((current) => (current ? { ...current, userMessageId: event.message.id } : current));
+      } else if (event.type === "notice") {
+        setNotice(
+          `${model} ha letto il massimo che riesce a tenere (${event.contextLength.toLocaleString("it-IT")} token) e ha tagliato l'inizio, dove ci sono le istruzioni del progetto: la risposta potrebbe non tenerne conto. Accorcia i testi del progetto o aumenta il contesto di Ollama.`
+        );
       } else if (event.type === "status") {
         const status = { kind: event.status, since: Date.now(), model, ...(event.expectedMs ? { expectedMs: event.expectedMs } : {}) };
         setPending((current) => (current ? { ...current, status } : current));
@@ -164,7 +203,8 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
     };
 
     try {
-      await streamMessage({ conversationId, model, content, ...(command ? { commandId: command.id } : {}) }, onEvent, controller.signal);
+      const project = !conversationId && activeProject ? { projectId: activeProject.id } : {};
+      await streamMessage({ conversationId, model, content, ...(command ? { commandId: command.id } : {}), ...project }, onEvent, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted) {
         setPending((current) => (current ? { ...current, error: explain(error) } : current));
@@ -204,6 +244,9 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         account={account}
         conversations={conversations.data ?? []}
         loading={conversations.isPending}
+        projects={knownProjects}
+        activeProjectId={activeProject?.id ?? null}
+        onChooseProject={chooseProject}
         activeId={conversationId}
         search={search}
         onSearch={setSearch}
@@ -222,6 +265,12 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
             <Menu size={20} aria-hidden="true" />
           </button>
           <ModelPicker models={available} current={model} loading={models.isPending} onChoose={chooseModel} disabled={streaming} />
+          {currentProject ? (
+            <span className="md-project-chip" title={currentProject.description || currentProject.name}>
+              <Folder size={14} aria-hidden="true" />
+              <span>{currentProject.name}</span>
+            </span>
+          ) : null}
           <div className="md-topbar-spacer" />
           <span className="md-local-badge" title="Modelli e conversazioni restano su questo computer">
             <Lock size={14} aria-hidden="true" />
@@ -247,6 +296,12 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
               <h1>Ciao {firstName(account.displayName)}, su cosa lavoriamo?</h1>
               {currentModel ? <SketchWords words={sketchWords} /> : null}
             </div>
+            {activeProject ? (
+              <p className="md-welcome-project">
+                Nel progetto <strong>{activeProject.name}</strong>
+                {activeProject.description ? ` · ${activeProject.description}` : ""}
+              </p>
+            ) : null}
             <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} commands={commands.data ?? []} autoFocus />
             <div className="md-suggestions">
               {SUGGESTIONS.map((suggestion) => (
@@ -304,6 +359,9 @@ function Sidebar(props: {
   account: Account;
   conversations: Conversation[];
   loading: boolean;
+  projects: ProjectSummary[];
+  activeProjectId: string | null;
+  onChooseProject: (id: string | null) => void;
   activeId?: string;
   search: string;
   onSearch: (value: string) => void;
@@ -334,16 +392,53 @@ function Sidebar(props: {
         <input id="md-search" type="search" placeholder="Cerca nelle chat" value={props.search} onChange={(event) => props.onSearch(event.target.value)} />
       </div>
 
+      <nav className="md-projects" aria-label="Progetti">
+        <div className="md-eyebrow">Progetti</div>
+        {props.projects.length === 0 ? (
+          <a className="md-project-item md-project-new" href="#/impostazioni/progetti">
+            <Plus size={14} aria-hidden="true" />
+            <span>Crea un progetto</span>
+          </a>
+        ) : (
+          <>
+            <button type="button" className="md-project-item" aria-pressed={props.activeProjectId === null} onClick={() => props.onChooseProject(null)}>
+              <span>Tutte le chat</span>
+            </button>
+            {props.projects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                className="md-project-item"
+                aria-pressed={props.activeProjectId === project.id}
+                onClick={() => props.onChooseProject(project.id)}
+                title={project.description || project.name}
+              >
+                <Folder size={14} aria-hidden="true" />
+                <span>{project.name}</span>
+              </button>
+            ))}
+          </>
+        )}
+      </nav>
+
       <nav className="md-history" aria-label="Conversazioni">
         {props.loading ? <p className="md-empty-note">Caricamento…</p> : null}
         {!props.loading && props.conversations.length === 0 ? (
-          <p className="md-empty-note">{props.search ? "Nessuna conversazione trovata." : "Le tue conversazioni appariranno qui."}</p>
+          <p className="md-empty-note">
+            {props.search ? "Nessuna conversazione trovata." : props.activeProjectId ? "Ancora nessuna chat in questo progetto." : "Le tue conversazioni appariranno qui."}
+          </p>
         ) : null}
         {groups.map((group) => (
           <div key={group.label} className="md-history-group">
             <div className="md-eyebrow">{group.label}</div>
             {group.items.map((conversation) => (
-              <HistoryItem key={conversation.id} conversation={conversation} active={conversation.id === props.activeId} onChanged={props.onChanged} />
+              <HistoryItem
+                key={conversation.id}
+                conversation={conversation}
+                active={conversation.id === props.activeId}
+                onChanged={props.onChanged}
+                {...(!props.activeProjectId && conversation.projectId ? { projectName: props.projects.find((project) => project.id === conversation.projectId)?.name ?? "" } : {})}
+              />
             ))}
           </div>
         ))}
@@ -389,7 +484,7 @@ function Sidebar(props: {
   );
 }
 
-function HistoryItem({ conversation, active, onChanged }: { conversation: Conversation; active: boolean; onChanged: (removedId?: string) => Promise<void> }) {
+function HistoryItem({ conversation, active, onChanged, projectName }: { conversation: Conversation; active: boolean; onChanged: (removedId?: string) => Promise<void> ; projectName?: string }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(conversation.title);
 
@@ -438,6 +533,7 @@ function HistoryItem({ conversation, active, onChanged }: { conversation: Conver
     <div className="md-history-item" data-active={active}>
       <a href={`#/c/${encodeURIComponent(conversation.id)}`} aria-current={active ? "page" : undefined}>
         <span>{conversation.title}</span>
+        {projectName ? <small className="md-history-project">{projectName}</small> : null}
       </a>
       <div className="md-history-actions">
         <button type="button" className="md-ghost" aria-label={`Rinomina ${conversation.title}`} onClick={() => setEditing(true)}>
