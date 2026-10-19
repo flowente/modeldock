@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 /** What every chat model can do in ModelDock. */
 const BASE_WORDS = ["scrivere", "riassumere", "tradurre", "spiegare", "correggere", "programmare", "riscrivere"];
@@ -13,7 +13,6 @@ const CAPABILITY_WORDS: Record<string, string> = {
 
 /** One look per letter, picked at random each time a word appears. */
 const LOOKS = ["hatch", "outline", "stripes", "offset", "dots", "double"] as const;
-const COLORS = 6;
 const WORD_MS = 1400;
 
 export function capabilityWords(capabilities: string[]): string[] {
@@ -26,12 +25,20 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
+/** One letter in the accent colour, two in a long word: an accent, not a palette. */
+function pickAccents(length: number): Set<number> {
+  const count = length >= 9 ? 2 : 1;
+  const picked = new Set<number>();
+  while (picked.size < Math.min(count, length)) picked.add(Math.floor(Math.random() * length));
+  return picked;
+}
+
 /**
- * Hand-drawn, sticker-like words that follow each other quickly: every letter gets its own
- * fill, colour and tilt, and the whole word "boils" like a sketchbook drawing.
- * Decorative: the same words are read once, quietly, by screen readers.
+ * Hand-drawn words that follow each other quickly, in ink with a touch of the accent: every
+ * letter gets its own fill and tilt, and the whole word "boils" like a sketchbook drawing.
+ * Decorative: screen readers get the list once, quietly.
  */
-export function SketchWords({ words, label }: { words: string[]; label: string }) {
+export function SketchWords({ words }: { words: string[] }) {
   const [index, setIndex] = useState(0);
   const calm = useMemo(prefersReducedMotion, []);
 
@@ -43,51 +50,49 @@ export function SketchWords({ words, label }: { words: string[]; label: string }
   }, [words, calm]);
 
   const word = words[index] ?? "";
-  const letters = useMemo(
-    () =>
-      [...word].map((char) => ({
-        char,
-        look: LOOKS[Math.floor(Math.random() * LOOKS.length)]!,
-        color: Math.floor(Math.random() * COLORS),
-        accent: Math.floor(Math.random() * COLORS),
-        tilt: Math.round((Math.random() - 0.5) * 14),
-        lift: Math.round((Math.random() - 0.5) * 6)
-      })),
+  const longest = words.reduce((best, candidate) => (candidate.length > best.length ? candidate : best), "");
+  const letters = useMemo(() => {
+    const chars = [...word];
+    const accents = pickAccents(chars.length);
+    return chars.map((char, position) => ({
+      char,
+      look: LOOKS[Math.floor(Math.random() * LOOKS.length)]!,
+      accent: accents.has(position),
+      tilt: Math.round((Math.random() - 0.5) * 14),
+      lift: Math.round((Math.random() - 0.5) * 5)
+    }));
     // A new set of looks each time the word changes, even when it comes back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [word, index]
-  );
+  }, [word, index]);
 
   return (
-    <p className="md-sketch-line">
-      <span className="md-sketch-label">{label}</span>
+    <span className="md-sketch-slot">
       <span className="md-sr-only">{words.join(", ")}</span>
+      {/* Invisible, sized like the longest word: the title does not move as words change. */}
+      <span className="md-sketch md-sketch-ghost" aria-hidden="true">
+        {longest}
+      </span>
       <span className="md-sketch" data-calm={calm} aria-hidden="true" key={`${index}-${word}`}>
-        {letters.map((letter, position) =>
-          letter.char === " " ? (
-            <span key={position} className="md-sketch-space" />
-          ) : (
-            <span
-              key={position}
-              className="md-sketch-letter"
-              data-look={letter.look}
-              style={
-                {
-                  "--sk": `var(--md-sk-${letter.color})`,
-                  "--sk-2": `var(--md-sk-${letter.accent === letter.color ? (letter.accent + 2) % COLORS : letter.accent})`,
-                  "--tilt": `${letter.tilt}deg`,
-                  "--lift": `${letter.lift}px`,
-                  "--delay": `${position * 35}ms`
-                } as React.CSSProperties
-              }
-            >
-              {letter.char}
-            </span>
-          )
-        )}
+        {letters.map((letter, position) => (
+          <span
+            key={position}
+            className="md-sketch-letter"
+            data-look={letter.look}
+            style={
+              {
+                "--sk": letter.accent ? "var(--md-accent)" : "var(--md-text)",
+                "--tilt": `${letter.tilt}deg`,
+                "--lift": `${letter.lift}px`,
+                "--delay": `${position * 35}ms`
+              } as CSSProperties
+            }
+          >
+            {letter.char}
+          </span>
+        ))}
       </span>
       <BoilFilters />
-    </p>
+    </span>
   );
 }
 
@@ -98,7 +103,7 @@ function BoilFilters() {
       {[3, 11, 23].map((seed, frame) => (
         <filter key={seed} id={`md-boil-${frame}`}>
           <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed={seed} result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.5" xChannelSelector="R" yChannelSelector="G" />
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G" />
         </filter>
       ))}
     </svg>

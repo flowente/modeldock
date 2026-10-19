@@ -216,8 +216,10 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         {isEmpty ? (
           <section className="md-welcome">
             <Mark size={44} />
-            <h1>Ciao {firstName(account.displayName)}, su cosa lavoriamo?</h1>
-            {currentModel ? <SketchWords words={sketchWords} label={`con ${shortModelName(currentModel.name)} puoi`} /> : null}
+            <div className="md-welcome-title">
+              <h1>Ciao {firstName(account.displayName)}, su cosa lavoriamo?</h1>
+              {currentModel ? <SketchWords words={sketchWords} /> : null}
+            </div>
             <Composer model={model} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} autoFocus />
             <div className="md-suggestions">
               {SUGGESTIONS.map((suggestion) => (
@@ -257,11 +259,6 @@ function pickModel(available: ChatModel[], conversationModel: string | undefined
   if (conversationModel && names.includes(conversationModel)) return conversationModel;
   if (chosen && names.includes(chosen)) return chosen;
   return names[0];
-}
-
-/** "gpt-oss:latest" → "gpt-oss"; a size tag like ":270m" stays, it tells models apart. */
-function shortModelName(name: string): string {
-  return name.replace(/:latest$/, "");
 }
 
 function firstName(name: string): string {

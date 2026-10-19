@@ -935,70 +935,43 @@
 
 /* ---------- Capability words on the welcome screen ---------- */
 
-.md-chat {
-  --md-sk-0: #0098c7;
-  --md-sk-1: #e0258a;
-  --md-sk-2: #d39b00;
-  --md-sk-3: #12a854;
-  --md-sk-4: #7b3ff2;
-  --md-sk-5: #2446e8;
+/* The greeting and the changing word sit on one line, centred together. */
+.md-welcome-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px 14px;
+  text-align: center;
 }
 
-.md-chat[data-theme="dark"] {
-  --md-sk-0: #35e0ff;
-  --md-sk-1: #ff5fb8;
-  --md-sk-2: #ffe14d;
-  --md-sk-3: #4dff88;
-  --md-sk-4: #b07cff;
-  --md-sk-5: #4f7bff;
+.md-sketch-slot {
+  position: relative;
+  display: inline-grid;
+  justify-items: start;
 }
 
-/* Two halves around the centre: the label stays put while words of any length come and go. */
-.md-sketch-line {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: center;
-  width: 100%;
-  max-width: 720px;
-  gap: 14px;
-  min-height: 64px;
-  margin: -14px 0 -6px;
-}
-
-.md-sketch-label {
-  justify-self: end;
-  font-size: 15px;
-  color: var(--md-muted);
-  white-space: nowrap;
-}
-
-.md-sketch {
-  justify-self: start;
-}
-
-/* On a phone the longest words would not fit beside the label: one above the other. */
-@media (max-width: 560px) {
-  .md-sketch-line {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 6px;
-  }
-
-  .md-sketch-label,
-  .md-sketch {
-    justify-self: center;
-  }
+.md-sketch-slot > .md-sketch {
+  grid-area: 1 / 1;
 }
 
 .md-sketch {
   display: inline-flex;
   align-items: baseline;
-  font-size: clamp(26px, 3.6vw, 40px);
+  font-size: clamp(26px, 4.4vw, 34px);
   font-weight: 800;
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  white-space: nowrap;
   animation: md-boil 0.36s steps(1) infinite;
+}
+
+.md-sketch-ghost {
+  visibility: hidden;
+  animation: none;
+  /* Room for the tilted letters and their offset print. */
+  padding-right: 0.3em;
 }
 
 .md-sketch[data-calm="true"] {
@@ -1015,10 +988,6 @@
   66% {
     filter: url(#md-boil-2);
   }
-}
-
-.md-sketch-space {
-  width: 0.35em;
 }
 
 .md-sketch-letter {
@@ -1040,47 +1009,46 @@
   }
 }
 
-/* Solid, with a second colour printed slightly off: misregistration. */
+/* Solid, with a faint second print slightly off. */
 .md-sketch-letter[data-look="offset"] {
   color: var(--sk);
-  text-shadow: 0.07em 0.06em 0 var(--sk-2);
+  text-shadow: 0.07em 0.06em 0 color-mix(in srgb, var(--sk) 28%, transparent);
 }
 
 /* Only the outline, drawn twice a little apart. */
 .md-sketch-letter[data-look="outline"] {
   color: transparent;
-  -webkit-text-stroke: 2px var(--sk);
-  text-shadow: 0.05em 0.04em 0 color-mix(in srgb, var(--sk-2) 55%, transparent);
+  -webkit-text-stroke: 1.6px var(--sk);
+  text-shadow: 0.05em 0.04em 0 color-mix(in srgb, var(--sk) 22%, transparent);
 }
 
-/* Filled, with an outline in another colour. */
+/* A light fill inside a firm outline. */
 .md-sketch-letter[data-look="double"] {
-  color: var(--sk);
-  -webkit-text-stroke: 2px var(--sk-2);
+  color: color-mix(in srgb, var(--sk) 18%, transparent);
+  -webkit-text-stroke: 1.6px var(--sk);
 }
 
-/* Diagonal hatching inside an outline. */
+/* Hatched, striped or dotted inside an outline. */
 .md-sketch-letter[data-look="hatch"],
 .md-sketch-letter[data-look="stripes"],
 .md-sketch-letter[data-look="dots"] {
   color: transparent;
-  -webkit-text-stroke: 1.5px var(--sk-2);
+  -webkit-text-stroke: 1.2px var(--sk);
   -webkit-background-clip: text;
   background-clip: text;
 }
 
 .md-sketch-letter[data-look="hatch"] {
-  background-image: repeating-linear-gradient(45deg, var(--sk) 0 2px, transparent 2px 6px);
+  background-image: repeating-linear-gradient(45deg, var(--sk) 0 1.5px, transparent 1.5px 5px);
 }
 
-/* Short horizontal strokes, like a felt-tip filling a letter in. */
 .md-sketch-letter[data-look="stripes"] {
-  background-image: repeating-linear-gradient(0deg, var(--sk) 0 3px, transparent 3px 7px);
+  background-image: repeating-linear-gradient(0deg, var(--sk) 0 2.5px, transparent 2.5px 6px);
 }
 
 .md-sketch-letter[data-look="dots"] {
-  background-image: radial-gradient(circle, var(--sk) 1.6px, transparent 2px);
-  background-size: 6px 6px;
+  background-image: radial-gradient(circle, var(--sk) 1.4px, transparent 1.8px);
+  background-size: 5px 5px;
 }
 
 .md-sketch-filters {
