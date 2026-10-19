@@ -947,12 +947,12 @@
 
 .md-sketch-slot {
   position: relative;
-  display: inline-grid;
-  justify-items: start;
+  display: inline-block;
+  transition: width 0.35s cubic-bezier(0.3, 0, 0.2, 1);
 }
 
-.md-sketch-slot > .md-sketch {
-  grid-area: 1 / 1;
+.md-sketch-slot[data-calm="true"] {
+  transition: none;
 }
 
 .md-sketch {
@@ -965,13 +965,6 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
   animation: md-boil 0.36s steps(1) infinite;
-}
-
-.md-sketch-ghost {
-  visibility: hidden;
-  animation: none;
-  /* Room for the tilted letters and their offset print. */
-  padding-right: 0.3em;
 }
 
 .md-sketch[data-calm="true"] {

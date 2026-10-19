@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 /** What every chat model can do in ModelDock. */
 const BASE_WORDS = ["scrivere", "riassumere", "tradurre", "spiegare", "correggere", "programmare", "riscrivere"];
@@ -50,7 +50,13 @@ export function SketchWords({ words }: { words: string[] }) {
   }, [words, calm]);
 
   const word = words[index] ?? "";
-  const longest = words.reduce((best, candidate) => (candidate.length > best.length ? candidate : best), "");
+  // The slot follows the word on screen, sliding to its width: the line stays centred on what
+  // is actually written, and the greeting glides a few pixels instead of jumping.
+  const wordRef = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (wordRef.current) setWidth(wordRef.current.offsetWidth);
+  }, [word, index]);
   const letters = useMemo(() => {
     const chars = [...word];
     const accents = pickAccents(chars.length);
@@ -66,13 +72,9 @@ export function SketchWords({ words }: { words: string[] }) {
   }, [word, index]);
 
   return (
-    <span className="md-sketch-slot">
+    <span className="md-sketch-slot" data-calm={calm} style={width === null ? undefined : { width }}>
       <span className="md-sr-only">{words.join(", ")}</span>
-      {/* Invisible, sized like the longest word: the title does not move as words change. */}
-      <span className="md-sketch md-sketch-ghost" aria-hidden="true">
-        {longest}
-      </span>
-      <span className="md-sketch" data-calm={calm} aria-hidden="true" key={`${index}-${word}`}>
+      <span className="md-sketch" data-calm={calm} aria-hidden="true" key={`${index}-${word}`} ref={wordRef}>
         {letters.map((letter, position) => (
           <span
             key={position}
