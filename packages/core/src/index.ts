@@ -315,6 +315,10 @@ export interface ChatInput {
 export interface ChatChunk {
   content: string;
   done: boolean;
+  /** The model is reasoning before it answers: text arrives, but not for the reply. */
+  thinking?: boolean;
+  /** On the last chunk: how long loading the model into memory took, when it had to. */
+  loadMs?: number;
 }
 
 export type ChatMessageStatus = "complete" | "stopped" | "error";
@@ -463,6 +467,8 @@ export interface OllamaGateway {
    * comes, streaming included. ModelDock checks the key and the model before calling this.
    */
   openAi(input: OpenAiForwardInput): Promise<OpenAiForwardResponse>;
+  /** Loads a model into memory ahead of the first message. Resolves once it is ready. */
+  warmModel(name: string): Promise<{ loadMs: number }>;
 }
 
 export type OpenAiEndpoint = "/v1/chat/completions" | "/v1/embeddings";

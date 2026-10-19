@@ -30,13 +30,21 @@ interface OllamaPsResponse {
   }>;
 }
 
+/**
+ * How long a model stays in memory after its last use. Ollama's own default is five minutes,
+ * and reloading a big model costs about a minute here: half an hour keeps the one in use warm.
+ */
+export const DEFAULT_KEEP_ALIVE = "30m";
+
 export class OllamaHttpGateway implements OllamaGateway {
   private readonly baseUrl: string;
   private readonly clock: Clock;
+  private readonly keepAlive: string;
 
-  public constructor(baseUrl: string, clock: Clock) {
+  public constructor(baseUrl: string, clock: Clock, keepAlive: string = DEFAULT_KEEP_ALIVE) {
     this.baseUrl = baseUrl;
     this.clock = clock;
+    this.keepAlive = keepAlive;
   }
 
   public async getHealth(): Promise<ComponentHealth> {
@@ -211,7 +219,7 @@ export class OllamaHttpGateway implements OllamaGateway {
     const response = await fetch(this.url("/api/chat"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: input.model, messages: input.messages, stream: true }),
+      body: JSON.stringify({ model: input.model, messages: input.messages, stream: true, keep_alive: this.keepAlive }),
       ...(input.signal ? { signal: input.signal } : {})
     });
 
@@ -261,7 +269,8 @@ export class OllamaHttpGateway implements OllamaGateway {
       response = await fetch(this.url(input.endpoint), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(input.body),
+        // A caller that sets its own keep_alive keeps it.
+        body: JSON.stringify({ keep_alive: this.keepAlive, ...input.body }),
         ...(input.signal ? { signal: input.signal } : {})
       });
     } catch (error) {
@@ -279,6 +288,20 @@ export class OllamaHttpGateway implements OllamaGateway {
       contentType: response.headers.get("content-type") ?? "application/json",
       body: response.body ?? emptyBody()
     };
+  }
+
+  public async warmModel(name: string): Promise<{ loadMs: number }> {
+    const response = await fetch(this.url("/api/generate"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // An empty prompt loads the model and answers nothing.
+      body: JSON.stringify({ model: name, prompt: "", stream: false, keep_alive: this.keepAlive })
+    });
+    if (!response.ok) {
+      throw this.toDependencyError("warmModel", `Ollama could not load ${name} (HTTP ${response.status})`);
+    }
+    const body = (await response.json()) as { load_duration?: number };
+    return { loadMs: Math.round((body.load_duration ?? 0) / 1e6) };
   }
 
   private async getJson<T>(path: string): Promise<T> {
@@ -351,11 +374,21 @@ function parseChatLine(line: string): ChatChunk | undefined {
     return undefined;
   }
 
-  const body = JSON.parse(line) as { message?: { content?: string }; done?: boolean; error?: string };
+  const body = JSON.parse(line) as {
+    message?: { content?: string; thinking?: string };
+    done?: boolean;
+    error?: string;
+    load_duration?: number;
+  };
 
   if (body.error) {
     throw new ModelDockError({ code: "OLLAMA_CHAT_FAILED", module: "ollama-adapter", message: body.error, httpStatus: 502 });
   }
 
-  return { content: body.message?.content ?? "", done: body.done === true };
+  return {
+    content: body.message?.content ?? "",
+    done: body.done === true,
+    ...(body.message?.thinking ? { thinking: true } : {}),
+    ...(body.done && body.load_duration ? { loadMs: Math.round(body.load_duration / 1e6) } : {})
+  };
 }

@@ -188,10 +188,36 @@ export class FakeOllamaGateway implements OllamaGateway {
 
   /** How long the fake waits between words. Raise it in tests that need time to press stop. */
   public chatDelayMs = 0;
+  /** Models listed here reason before answering, like gpt-oss: a few "thinking" chunks first. */
+  public thinkingModels = new Set<string>();
+  /** What loading a model that is not in memory "costs", reported like Ollama does. */
+  public loadMs = 1500;
+  /** How long warmModel takes, for tests that look at the "loading" state. */
+  public warmDelayMs = 0;
+  public warmedModels: string[] = [];
+
+  public async warmModel(name: string): Promise<{ loadMs: number }> {
+    this.warmedModels.push(name);
+    if (this.warmDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.warmDelayMs));
+    const wasLoaded = this.models.get(name)?.running === true;
+    this.updateRuntimeState(name, true);
+    return { loadMs: wasLoaded ? 0 : this.loadMs };
+  }
 
   public async *chat(input: ChatInput): AsyncIterable<ChatChunk> {
     const question = input.messages.at(-1)?.content ?? "";
     const words = `Fake reply from ${input.model} to: ${question}`.split(" ");
+    // Like Ollama: answering loads the model, and the last chunk says how long that took.
+    const wasLoaded = this.models.get(input.model)?.running === true;
+    if (this.models.has(input.model)) this.updateRuntimeState(input.model, true);
+
+    if (this.thinkingModels.has(input.model)) {
+      for (let step = 0; step < 3; step += 1) {
+        if (input.signal?.aborted) return;
+        if (this.chatDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.chatDelayMs));
+        yield { content: "", done: false, thinking: true };
+      }
+    }
 
     for (const [index, word] of words.entries()) {
       if (input.signal?.aborted) {
@@ -205,7 +231,7 @@ export class FakeOllamaGateway implements OllamaGateway {
       yield { content: index === 0 ? word : ` ${word}`, done: false };
     }
 
-    yield { content: "", done: true };
+    yield { content: "", done: true, ...(wasLoaded ? {} : { loadMs: this.loadMs }) };
   }
 
   /** The last request forwarded to the OpenAI-compatible endpoints, for tests to inspect. */

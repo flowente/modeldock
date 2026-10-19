@@ -29,6 +29,7 @@ describe("diagnostics", () => {
         probeModel: async () => ({ model: "llama3.1:8b", output: "ok", durationMs: 1 }),
         chat: async function* () {},
         getModelCapabilities: async () => ["completion"],
+        warmModel: async () => ({ loadMs: 0 }),
         openAi: async () => ({ status: 200, contentType: "application/json", body: (async function* () {})() })
       }
     });

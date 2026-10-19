@@ -43,6 +43,8 @@ interface PendingTurn {
   userText: string;
   answer: string;
   error?: string;
+  /** What is happening before the first word, and since when. */
+  status?: { kind: "loading" | "thinking"; since: number; expectedMs?: number; model: string };
 }
 
 interface Props {
@@ -62,7 +64,12 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const [notice, setNotice] = useState<string | null>(null);
   const stopRef = useRef<AbortController | null>(null);
 
-  const models = useQuery({ queryKey: ["chat-models"], queryFn: api.models });
+  const models = useQuery({
+    queryKey: ["chat-models"],
+    queryFn: api.models,
+    // While a model loads, look more often so the dot turns green soon after it is ready.
+    refetchInterval: (query) => (query.state.data?.some((candidate) => candidate.state === "loading") ? 2000 : 15_000)
+  });
   const conversations = useQuery({ queryKey: ["conversations", search], queryFn: () => api.conversations(search) });
   const detail = useQuery({
     queryKey: ["conversation", conversationId],
@@ -89,7 +96,18 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
   const capabilityKey = capabilities.join(",");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sketchWords = useMemo(() => capabilityWords(capabilities), [capabilityKey]);
+  /** Starts loading a model now, so the wait is under way while the question is typed. */
+  const warm = (name: string | undefined) => {
+    const target = available.find((candidate) => candidate.name === name);
+    if (!target || target.state === "ready" || target.state === "loading") return;
+    void api
+      .warmModel(target.name)
+      .catch(() => undefined)
+      .finally(() => void queryClient.invalidateQueries({ queryKey: ["chat-models"] }));
+  };
+
   const chooseModel = (name: string) => {
+    warm(name);
     setSwitchedTo(name);
     setChosenModel(name);
     try {
@@ -125,8 +143,11 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
         void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       } else if (event.type === "message") {
         setPending((current) => (current ? { ...current, userMessageId: event.message.id } : current));
+      } else if (event.type === "status") {
+        const status = { kind: event.status, since: Date.now(), model, ...(event.expectedMs ? { expectedMs: event.expectedMs } : {}) };
+        setPending((current) => (current ? { ...current, status } : current));
       } else if (event.type === "delta") {
-        setPending((current) => (current ? { ...current, answer: current.answer + event.content } : current));
+        setPending((current) => (current ? { ...current, status: undefined, answer: current.answer + event.content } : current));
       } else if (event.type === "done") {
         setPending((current) => (current ? { ...current, assistantMessageId: event.message.id } : current));
       } else if (event.type === "error") {
@@ -152,6 +173,8 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
     // The saved conversation now holds both messages: show those instead of the live copy.
     if (targetId) await queryClient.invalidateQueries({ queryKey: ["conversation", targetId] });
     await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    // The model has just answered, so it is in memory now.
+    void queryClient.invalidateQueries({ queryKey: ["chat-models"] });
     setPending(null);
   };
 
@@ -220,7 +243,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
               <h1>Ciao {firstName(account.displayName)}, su cosa lavoriamo?</h1>
               {currentModel ? <SketchWords words={sketchWords} /> : null}
             </div>
-            <Composer model={model} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} autoFocus />
+            <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} autoFocus />
             <div className="md-suggestions">
               {SUGGESTIONS.map((suggestion) => (
                 <button key={suggestion} type="button" className="md-ghost" onClick={() => void send(suggestion)} disabled={!model}>
@@ -243,7 +266,7 @@ export function ChatShell({ account, route, theme, onToggleTheme, onSignedOut }:
                   {notice}
                 </div>
               ) : null}
-              <Composer model={model} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} />
+              <Composer model={model} {...(currentModel ? { modelInfo: currentModel } : {})} onStartTyping={() => warm(model)} streaming={streaming} onSend={send} onStop={stop} noModels={!models.isPending && available.length === 0} account={account} />
               <p className="md-footnote">Le conversazioni restano su questo computer.</p>
             </div>
           </>
@@ -476,6 +499,7 @@ function ModelPicker(props: { models: ChatModel[]; current?: string; loading: bo
         aria-haspopup="listbox"
         disabled={props.disabled || props.models.length === 0}
       >
+        {current ? <StateDot state={current.state} /> : null}
         {props.loading ? "…" : current ? name : "Nessun modello"}
         {tag ? <span className="md-model-size">{tag}</span> : null}
         <ChevronDown size={16} aria-hidden="true" />
@@ -494,7 +518,11 @@ function ModelPicker(props: { models: ChatModel[]; current?: string; loading: bo
                 setOpen(false);
               }}
             >
-              <span>{model.name}</span>
+              <StateDot state={model.state} />
+              <span className="md-model-option">
+                {model.name}
+                <small>{stateLabel(model)}</small>
+              </span>
               <span className="md-menu-detail">{formatSize(model.sizeBytes)}</span>
               {model.name === props.current ? <Check size={16} aria-hidden="true" style={{ color: "var(--md-accent)" }} /> : <span style={{ width: 16 }} />}
             </button>
@@ -502,6 +530,52 @@ function ModelPicker(props: { models: ChatModel[]; current?: string; loading: bo
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Green: in memory, answers at once. Pulsing: loading. Hollow: loads with the first message. */
+function StateDot({ state }: { state: ChatModel["state"] }) {
+  if (!state) return null;
+  return <span className="md-state-dot" data-state={state} aria-hidden="true" />;
+}
+
+function stateLabel(model: ChatModel): string {
+  if (model.state === "ready") return "Pronto, in memoria";
+  if (model.state === "loading") return "Si sta caricando…";
+  return model.lastLoadMs ? `Da caricare, circa ${formatSeconds(model.lastLoadMs)}` : "Da caricare al primo messaggio";
+}
+
+/** Seconds since `since`, ticking: proof that something is happening. */
+function useElapsed(since: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (since === undefined) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [since]);
+  return since === undefined ? 0 : Math.max(0, now - since);
+}
+
+/** Before the first word: what the model is doing, for how long, and how long it took last time. */
+function WaitStatus({ status }: { status: NonNullable<PendingTurn["status"]> }) {
+  const elapsed = useElapsed(status.since);
+  const name = status.model.replace(/:latest$/, "");
+  const text =
+    status.kind === "loading"
+      ? status.expectedMs
+        ? `Carico ${name} in memoria… la volta scorsa ci ha messo circa ${formatSeconds(status.expectedMs)}.`
+        : `Carico ${name} in memoria… la prima volta può volerci anche un minuto.`
+      : `${name} sta ragionando prima di rispondere…`;
+  return (
+    <p className="md-wait-status" role="status">
+      <span className="md-wait-spinner" aria-hidden="true" />
+      <span>{text}</span>
+      {/* Hidden from screen readers: a status read aloud every second would be noise. */}
+      <span className="md-wait-time" aria-hidden="true">
+        {formatSeconds(elapsed)}
+      </span>
+    </p>
   );
 }
 
@@ -552,7 +626,7 @@ function Thread({ messages, loading, missing, pending }: { messages: ChatMessage
                 {pending.error}
               </div>
             ) : (
-              <AssistantMessage text={pending.answer} status="streaming" />
+              <AssistantMessage text={pending.answer} status="streaming" {...(pending.status ? { wait: pending.status } : {})} />
             )}
           </>
         ) : null}
@@ -562,13 +636,15 @@ function Thread({ messages, loading, missing, pending }: { messages: ChatMessage
   );
 }
 
-function AssistantMessage({ text, status }: { text: string; status: ChatMessage["status"] | "streaming" }) {
+function AssistantMessage({ text, status, wait }: { text: string; status: ChatMessage["status"] | "streaming"; wait?: PendingTurn["status"] }) {
   return (
     <article className="md-assistant">
       <Mark size={26} />
       <div className="md-assistant-body">
         {text ? <Markdown text={text} /> : null}
-        {status === "streaming" ? (
+        {status === "streaming" && wait && !text ? (
+          <WaitStatus status={wait} />
+        ) : status === "streaming" ? (
           <span>
             <span className="md-cursor" aria-hidden="true" />
             <span className="md-sr-only">Risposta in arrivo</span>
@@ -591,8 +667,27 @@ function AssistantMessage({ text, status }: { text: string; status: ChatMessage[
 
 /* ---------------------------------------------------------------- Composer */
 
+/** The model's state in words, beside its name under the message box. */
+function readiness(model: ChatModel | undefined): string {
+  if (model?.state === "ready") return "pronto, in memoria";
+  if (model?.state === "loading") return "si sta caricando in memoria…";
+  if (model?.state === "idle") {
+    return model.lastLoadMs ? `si carica al primo messaggio (circa ${formatSeconds(model.lastLoadMs)})` : "si carica al primo messaggio";
+  }
+  return "gira su questo computer";
+}
+
+function formatSeconds(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, "0")} s`;
+}
+
 function Composer(props: {
   model?: string;
+  /** The chosen model as the server sees it: whether it is in memory, and how long it loads. */
+  modelInfo?: ChatModel;
+  /** Called on the first character typed: a good moment to start loading the model. */
+  onStartTyping?: () => void;
   streaming: boolean;
   noModels: boolean;
   account: Account;
@@ -631,7 +726,7 @@ function Composer(props: {
     : props.streaming
       ? `${props.model} sta rispondendo…`
       : props.model
-        ? `${props.model} · gira su questo computer`
+        ? `${props.model} · ${readiness(props.modelInfo)}`
         : "";
 
   return (
@@ -645,7 +740,10 @@ function Composer(props: {
         rows={1}
         placeholder="Scrivi un messaggio…"
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          if (!text && event.target.value) props.onStartTyping?.();
+          setText(event.target.value);
+        }}
         onKeyDown={onKeyDown}
         disabled={props.noModels}
         autoFocus={props.autoFocus}

@@ -232,3 +232,67 @@ describe("chat API", () => {
     expect((await app.inject({ method: "GET", url: "/api/system/status", headers: { cookie: memberCookie } })).statusCode).toBe(403);
   });
 });
+
+describe("models in memory", () => {
+  const modelsOf = async (app: FastifyInstance, cookie: string) =>
+    (await app.inject({ method: "GET", url: "/api/chat/models", headers: { cookie } })).json() as Array<{ name: string; state: string; lastLoadMs?: number }>;
+
+  it("says which model is ready and which needs loading", async () => {
+    const app = await start();
+    const { adminCookie } = await signedIn(app);
+    // In the fake, llama3.1:8b starts in memory and phi3:mini does not.
+    const states = Object.fromEntries((await modelsOf(app, adminCookie)).map((model) => [model.name, model.state]));
+    expect(states).toEqual({ "llama3.1:8b": "ready", "phi3:mini": "idle" });
+  });
+
+  it("loads a model ahead of the first message, once, and remembers how long it took", async () => {
+    const gateway = new FakeOllamaGateway();
+    gateway.warmDelayMs = 60;
+    const app = await start({ ollamaGateway: gateway });
+    const { adminCookie } = await signedIn(app);
+
+    const first = await app.inject({ method: "POST", url: "/api/chat/models/phi3%3Amini/warm", headers: { cookie: adminCookie } });
+    expect(first.statusCode).toBe(202);
+    await app.inject({ method: "POST", url: "/api/chat/models/phi3%3Amini/warm", headers: { cookie: adminCookie } });
+    expect((await modelsOf(app, adminCookie)).find((model) => model.name === "phi3:mini")?.state).toBe("loading");
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(gateway.warmedModels).toEqual(["phi3:mini"]);
+    expect((await modelsOf(app, adminCookie)).find((model) => model.name === "phi3:mini")).toMatchObject({ state: "ready", lastLoadMs: 1500 });
+
+    const again = await app.inject({ method: "POST", url: "/api/chat/models/phi3%3Amini/warm", headers: { cookie: adminCookie } });
+    expect(again.json()).toEqual({ state: "ready" });
+  });
+
+  it("does not load a model the account may not use", async () => {
+    const app = await start();
+    const { memberCookie } = await signedIn(app);
+    expect((await app.inject({ method: "POST", url: "/api/chat/models/phi3%3Amini/warm", headers: { cookie: memberCookie } })).statusCode).toBe(403);
+  });
+
+  it("tells the chat the model is loading, then thinking, before the first word", async () => {
+    const gateway = new FakeOllamaGateway();
+    gateway.thinkingModels.add("phi3:mini");
+    const app = await start({ ollamaGateway: gateway });
+    const { adminCookie } = await signedIn(app);
+
+    const first = events(await app.inject({ method: "POST", url: "/api/chat/messages", headers: { cookie: adminCookie }, payload: { model: "phi3:mini", content: "ciao" } }));
+    const types = first.map((event) => (event.type === "status" ? `status:${event.status}` : event.type));
+    expect(types.slice(0, 5)).toEqual(["conversation", "message", "status:loading", "status:thinking", "delta"]);
+    expect(first.find((event) => event.type === "status" && event.status === "loading")).not.toHaveProperty("expectedMs");
+
+    // Now in memory: no loading status. Once unloaded again, the wait is announced with last time's duration.
+    const second = events(await app.inject({ method: "POST", url: "/api/chat/messages", headers: { cookie: adminCookie }, payload: { model: "phi3:mini", content: "ciao" } }));
+    expect(second.some((event) => event.type === "status" && event.status === "loading")).toBe(false);
+    await gateway.unloadModel({ model: "phi3:mini" });
+    const third = events(await app.inject({ method: "POST", url: "/api/chat/messages", headers: { cookie: adminCookie }, payload: { model: "phi3:mini", content: "ciao" } }));
+    expect(third.find((event) => event.type === "status" && event.status === "loading")).toMatchObject({ expectedMs: 1500 });
+  });
+
+  it("a model that answers at once sends no status at all", async () => {
+    const app = await start();
+    const { adminCookie } = await signedIn(app);
+    const reply = events(await app.inject({ method: "POST", url: "/api/chat/messages", headers: { cookie: adminCookie }, payload: { model: "llama3.1:8b", content: "ciao" } }));
+    expect(reply.some((event) => event.type === "status")).toBe(false);
+  });
+});

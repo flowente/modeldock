@@ -126,12 +126,17 @@ export interface ChatModel {
   sizeBytes: number;
   /** As Ollama reports them: "completion", "tools", "thinking", "vision"... */
   capabilities: string[];
+  /** In memory and answering at once, being loaded, or to be loaded by the first message. */
+  state?: "ready" | "loading" | "idle";
+  /** How long it took to load last time, when known. */
+  lastLoadMs?: number;
 }
 
 export type StreamEvent =
   | { type: "conversation"; conversation: Conversation }
   | { type: "message"; message: ChatMessage }
   | { type: "delta"; content: string }
+  | { type: "status"; status: "loading" | "thinking"; expectedMs?: number }
   | { type: "done"; message: ChatMessage }
   | { type: "error"; error: { code: string; message: string }; message?: ChatMessage };
 
@@ -173,6 +178,7 @@ export const api = {
     request<{ account: Account }>(`/api/auth/invitations/${encodeURIComponent(token)}/accept`, json({ password })),
 
   models: () => request<ChatModel[]>("/api/chat/models"),
+  warmModel: (name: string) => request<{ state: string }>(`/api/chat/models/${encodeURIComponent(name)}/warm`, { method: "POST" }),
   conversations: (query?: string) =>
     request<Conversation[]>(`/api/chat/conversations${query?.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`),
   conversation: (id: string) => request<{ conversation: Conversation; messages: ChatMessage[] }>(`/api/chat/conversations/${encodeURIComponent(id)}`),
